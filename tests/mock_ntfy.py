@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 MESSAGES = []                     # list of event dicts
+DROP_UNTIL = 0                    # simulate a network outage: streams cut + refused until then
 COND = threading.Condition()
 
 
@@ -24,6 +25,8 @@ def add(topic, message, extra=None):
 def since_filter(since):
     if not since:
         return lambda ev: True
+    if since.isdigit():                       # unix timestamp
+        return lambda ev: ev["time"] >= int(since)
     m = re.fullmatch(r"(\d+)([smh])", since)
     if m:
         cutoff = time.time() - int(m[1]) * {"s": 1, "m": 60, "h": 3600}[m[2]]
@@ -59,7 +62,15 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(ev).encode())
 
     def do_GET(self):
+        global DROP_UNTIL
         u = urlparse(self.path)
+        if u.path == "/__drop":                       # test hook: cut all streams for N seconds
+            DROP_UNTIL = time.time() + float(parse_qs(u.query).get("secs", ["5"])[0])
+            with COND:
+                COND.notify_all()
+            self.send_response(200); self.end_headers(); return
+        if time.time() < DROP_UNTIL and "poll" not in u.query:
+            self.send_response(503); self.end_headers(); return
         m = re.fullmatch(r"/([\w-]+)/json", u.path)
         if not m:
             self.send_response(404); self.end_headers(); return
@@ -75,11 +86,21 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write("".join(json.dumps(e) + "\n" for e in out).encode())
             return
         self.wfile.write(b'{"event":"open"}\n'); self.wfile.flush()
-        seen = len(MESSAGES)
+        since = q.get("since", [""])[0]
+        with COND:
+            if since:
+                f = since_filter(since)
+                for e in MESSAGES:
+                    if e["topic"] == topic and f(e):
+                        self.wfile.write((json.dumps(e) + "\n").encode())
+                self.wfile.flush()
+            seen = len(MESSAGES)
         try:
             while True:
                 with COND:
                     COND.wait(timeout=10)
+                    if time.time() < DROP_UNTIL:
+                        return                        # connection "lost"
                     new, seen = MESSAGES[seen:], len(MESSAGES)
                 for e in new:
                     if e["topic"] == topic:

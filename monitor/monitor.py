@@ -85,7 +85,7 @@ def main():
                 dev = devices.setdefault(name, Device(name))
                 dev.emoji = hb.get("e", dev.emoji)
                 if dev.alerted is True:
-                    if hb.get("b") == dev.boot and hb.get("s") == "up":
+                    if hb.get("b", dev.boot) == dev.boot and hb.get("s", "up") == "up":
                         notify(f"{dev.emoji} {name}: 🟢 back online",
                                f"{name} reconnected (was unreachable since "
                                f"{time.strftime('%H:%M', time.localtime(dev.last_seen))})",
@@ -93,8 +93,8 @@ def main():
                     # different boot id = it rebooted, and the agent already said "turned on"
                 dev.alerted = False
                 dev.last_seen = ev.get("time", time.time())
-                dev.state = hb.get("s", "up")
-                dev.boot = hb.get("b")
+                dev.state = hb.get("s", dev.state)   # receipts ("ack") carry no state
+                dev.boot = hb.get("b", dev.boot)
         except Exception as e:
             log.warning("poll failed (monitor offline?): %s", e)
             time.sleep(POLL)

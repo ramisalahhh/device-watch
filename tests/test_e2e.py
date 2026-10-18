@@ -101,8 +101,19 @@ def main():
           not any('"dryrun"' in m["message"] for m in msgs(TOPIC + "-hb")))
 
     cmd("restart")
+    check("receipt (ack) sent for commands", wait_for(TOPIC + "-hb", lambda m: '"type":"ack"' in m["message"]))
     check("restart runs after delay",
           wait_for(TOPIC + "-hb", lambda m: '"cmd":"restart"' in m["message"], timeout=8))
+
+    seen_acks = {m["id"] for m in msgs(TOPIC + "-hb") if '"type":"ack"' in m["message"]}
+    time.sleep(3)   # let the earlier restart's delayed action finish
+    # network blip: stream is cut, a command is sent while disconnected -> must still arrive
+    urllib.request.urlopen(f"{SERVER}/__drop?secs=3").read()
+    time.sleep(0.5)
+    cmd("restart")
+    check("command sent during outage is delivered after reconnect",
+          wait_for(TOPIC + "-hb", lambda m: '"type":"ack"' in m["message"] and '"restart"' in m["message"]
+                   and m["id"] not in seen_acks, timeout=25))
 
     cmd("lock", to="Other-PC")
     time.sleep(2)

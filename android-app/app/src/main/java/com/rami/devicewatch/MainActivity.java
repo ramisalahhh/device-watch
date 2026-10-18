@@ -32,7 +32,8 @@ public class MainActivity extends Activity {
     static final long STALE_SEC = 35 * 60;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService io = Executors.newSingleThreadExecutor();      // refreshes
+    private final ExecutorService cmdIo = Executors.newSingleThreadExecutor();   // commands never wait behind a refresh
     private final Map<String, JSONObject> devices = new TreeMap<>();
     private Prefs prefs;
     private String lastId, signature;
@@ -115,21 +116,35 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         io.shutdownNow();
+        cmdIo.shutdownNow();
     }
 
     // ------------------------------------------------------------------ network
     private void sendCommand(String cmd, String to) {
-        io.execute(() -> {
-            try {
-                Api.command(prefs, cmd, to, "app");
-                ui.post(() -> {
-                    if (!cmd.equals("status")) toast("Sent “" + cmd + "” to " + (to.equals("*") ? "all" : to));
-                    fastUntil = System.currentTimeMillis() + 25000;
-                    schedule(1500);
-                });
-            } catch (Exception e) {
-                ui.post(() -> toast("Couldn't reach the server"));
+        cmdIo.execute(() -> {
+            Exception last = null;
+            for (int attempt = 0; attempt < 3; attempt++) {           // retry brief network hiccups
+                try {
+                    Api.command(prefs, cmd, to, "app");
+                    last = null;
+                    break;
+                } catch (Exception e) {
+                    last = e;
+                    try { Thread.sleep(1200L * (attempt + 1)); } catch (InterruptedException ie) { return; }
+                }
             }
+            final Exception err = last;
+            ui.post(() -> {
+                if (err != null) {
+                    String m = String.valueOf(err.getMessage());
+                    toast(m.contains("429") ? "Server busy (rate limit) - try again in a minute"
+                                            : "Couldn't send - check your internet");
+                    return;
+                }
+                if (!cmd.equals("status")) toast("Sent “" + cmd + "” to " + (to.equals("*") ? "all" : to) + "…");
+                fastUntil = System.currentTimeMillis() + 25000;
+                schedule(1200);
+            });
         });
     }
 
@@ -172,7 +187,13 @@ public class MainActivity extends Activity {
                 lastId = ev.optString("id", lastId);
                 JSONObject hb = new JSONObject(ev.optString("message"));
                 String name = hb.optString("d");
-                if (name.isEmpty() || "dryrun".equals(hb.optString("type"))) continue;
+                String type = hb.optString("type");
+                if (name.isEmpty() || "dryrun".equals(type)) continue;
+                if ("ack".equals(type)) {                    // receipt: the laptop got the command
+                    long age = System.currentTimeMillis() / 1000 - ev.optLong("time");
+                    if (age < 60) toast("✓ " + name + " received “" + hb.optString("cmd") + "”");
+                    continue;
+                }
                 hb.put("_t", ev.optLong("time"));
                 devices.put(name, hb);
             } catch (Exception ignored) {

@@ -299,6 +299,27 @@ def http_post(url, body, headers, timeout=10):
     finally:
         conn.close()
 
+
+def write_crash_log(exc_info=None):
+    """Only touches the disk when something actually went wrong (kept under ~50 KB)."""
+    import traceback
+    try:
+        path = os.path.join(BASE_DIR, "crash.log")
+        mode = "w" if os.path.exists(path) and os.path.getsize(path) > 50_000 else "a"
+        with open(path, mode, encoding="utf-8") as f:
+            f.write(time.strftime("\n=== %Y-%m-%d %H:%M:%S ===\n"))
+            if exc_info:
+                traceback.print_exception(*exc_info, file=f)
+            else:
+                traceback.print_exc(file=f)
+    except Exception:
+        pass
+
+
+def install_crash_hooks():
+    sys.excepthook = lambda *ei: write_crash_log(ei)
+    threading.excepthook = lambda a: write_crash_log((a.exc_type, a.exc_value, a.exc_traceback))
+
 # ----------------------------------------------------------------------------
 # ntfy transport
 # ----------------------------------------------------------------------------
@@ -533,16 +554,22 @@ class Agent:
 
     # ---- remote commands -------------------------------------------------
     def command_listener(self):
-        url = f"{self.net.server}/{self.net.cmd_topic}/json"
+        """One long-lived HTTP stream. On every reconnect we ask ntfy for everything since
+        the last moment the stream was known alive, so a Wi-Fi blip never loses a command
+        (duplicates are dropped by message id)."""
+        base = f"{self.net.server}/{self.net.cmd_topic}/json"
         headers = {k: v for k, v in self.net.headers.items() if k == "Authorization"}
-        backoff = 5
+        last_alive = None          # fresh start: only NEW commands (never replay old ones)
+        backoff = 1
         while not self.stopping.is_set():
+            started = time.time()
             try:
-                # ntfy sends a keepalive every ~45s, so 120s means "connection is dead"
-                conn, resp = http_open(url, headers=headers, timeout=120)
+                url = base if last_alive is None else f"{base}?since={int(last_alive) - 20}"
+                # ntfy sends a keepalive every ~45s; 75s of silence = dead connection
+                conn, resp = http_open(url, headers=headers, timeout=75)
                 try:
-                    backoff = 5
                     for raw in resp:
+                        last_alive = time.time()
                         if self.stopping.is_set():
                             return
                         try:
@@ -550,19 +577,25 @@ class Agent:
                         except ValueError:
                             continue
                         if ev.get("event") == "message":
-                            self.handle_command(ev)
+                            try:
+                                self.handle_command(ev)
+                            except Exception:
+                                log.exception("command failed")
                 finally:
                     conn.close()
             except Exception as e:
-                log.debug("command stream: %s", e)
+                log.info("command stream reconnecting: %s", e)
+            if last_alive is None:     # first connect failed: catch up from our start time
+                last_alive = started
+            # healthy connection that just ended -> reconnect at once; repeated failures -> back off
+            backoff = 1 if time.time() - started > 60 else min(backoff * 2, 60)
             self.stopping.wait(backoff)
-            backoff = min(backoff * 2, 120)
 
     def handle_command(self, ev):
         if ev.get("id") in self.seen_cmds:
             return
         self.seen_cmds.append(ev.get("id"))
-        if abs(time.time() - ev.get("time", 0)) > 180:      # stale/replayed
+        if abs(time.time() - ev.get("time", 0)) > 300:      # stale/replayed
             return
         try:
             msg = json.loads(ev.get("message", ""))
@@ -579,6 +612,9 @@ class Agent:
             self.net.notify(self.t("⛔ refused"), f"'{cmd}' is not allowed on this device", priority=2)
             return
         log.info("command: %s", cmd)
+        if cmd != "status":   # status replies with fresh data, which is its own receipt
+            self.net.publish_hb({"v": 1, "type": "ack", "d": self.name, "cmd": cmd,
+                                 "ts": int(time.time())}, timeout=5)
         if cmd == "status":
             self.send_status(reply)
         elif cmd == "lock":
@@ -682,25 +718,30 @@ class Agent:
         tick = 0
         last_loop = time.time()
         while not self.stopping.wait(interval):
-            now = time.time()
-            if now - last_loop > interval * 6 + 60:      # clock jumped: we were asleep
-                self.on_resume()
-            last_loop = now
-            if self.state != "up":
-                # still running long after "going down": the sleep didn't happen / we missed wake
-                if self.state == "sleep" and now - self.down_at > 120:
+            try:
+                now = time.time()
+                if now - last_loop > interval * 6 + 60:      # clock jumped: we were asleep
                     self.on_resume()
-                continue
-            table = process_table()
-            self.fg = foreground(table)
-            self.check_apps(set(table.values()))
-            tick += 1
-            if tick % 6 == 0:                              # these change slowly
-                self.check_idle()
-                self.check_battery()
-            if now - self.last_hb >= hb_every:
-                self.heartbeat()
-            del table
+                last_loop = now
+                if self.state != "up":
+                    # still running long after "going down": the sleep didn't happen / we missed wake
+                    if self.state == "sleep" and now - self.down_at > 120:
+                        self.on_resume()
+                    continue
+                table = process_table()
+                self.fg = foreground(table)
+                self.check_apps(set(table.values()))
+                tick += 1
+                if tick % 6 == 0:                              # these change slowly
+                    self.check_idle()
+                    self.check_battery()
+                if now - self.last_hb >= hb_every:
+                    self.heartbeat()
+                del table
+            except Exception:
+                # never die: log it (crash.log) and keep watching on the next tick
+                log.exception("main loop error")
+                write_crash_log()
 
     def shutdown_hook(self, *_):
         self.announce_down("off", "🔴 shutting down")
@@ -857,6 +898,7 @@ def main():
                    "If you see this on your phone (and watch), DeviceWatch works!", urgent=True)
         print("Sent. Check your phone.")
         return
+    install_crash_hooks()
     agent = Agent(cfg)
     for sig in (signal.SIGTERM, signal.SIGINT) + ((signal.SIGBREAK,) if IS_WIN else ()):
         try:

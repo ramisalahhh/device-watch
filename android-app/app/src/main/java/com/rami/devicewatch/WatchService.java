@@ -107,7 +107,7 @@ public class WatchService extends Service {
             Prefs p = new Prefs(this);
             String url = p.server() + "/" + p.topic() + "/json" + (lastId != null ? "?since=" + lastId : "");
             try {
-                conn = Api.open(url, p.token(), 120_000);
+                conn = Api.open(url, p.token(), 75_000);   // ntfy keepalive ~45 s
                 Api.check(conn);
                 backoff = 5;
                 try (BufferedReader r = new BufferedReader(

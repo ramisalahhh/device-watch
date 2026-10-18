@@ -122,6 +122,7 @@ async function poll(){
       lastId = ev.id;
       let hb; try { hb = JSON.parse(ev.message); } catch { continue; }
       if (!hb.d || hb.type === "dryrun") continue;
+      if (hb.type === "ack") { if (Date.now()/1000 - ev.time < 60) toast(`✓ ${hb.d} received "${hb.cmd}"`); continue; }
       hb._t = ev.time;
       devices[hb.d] = hb;
     }

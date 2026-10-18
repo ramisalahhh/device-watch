@@ -27,12 +27,15 @@ public class ActionReceiver extends BroadcastReceiver {
         final PendingResult pending = goAsync();
         final String token = new Prefs(app).token();
         new Thread(() -> {
-            String msg;
-            try {
-                Api.post(url, body, token);
-                msg = "Sent: " + label;
-            } catch (Exception e) {
-                msg = "Couldn't send - no internet?";
+            String msg = "Couldn't send - no internet?";
+            for (int attempt = 0; attempt < 3; attempt++) {     // retry brief network hiccups
+                try {
+                    Api.post(url, body, token);
+                    msg = "Sent: " + label;
+                    break;
+                } catch (Exception e) {
+                    try { Thread.sleep(1200L * (attempt + 1)); } catch (InterruptedException ie) { break; }
+                }
             }
             final String m = msg;
             new Handler(Looper.getMainLooper()).post(() -> Toast.makeText(app, m, Toast.LENGTH_SHORT).show());

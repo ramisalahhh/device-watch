@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>DeviceWatch</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>">
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#262a34; --text:#e8eaf0; --dim:#8b91a1;
+          --green:#2ecc71; --amber:#f5a623; --red:#ff5b5b; --blue:#4c8dff; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         padding:16px 16px calc(24px + env(safe-area-inset-bottom)); max-width:560px; margin-inline:auto; }
+  header { display:flex; align-items:center; justify-content:space-between; margin:4px 0 16px; }
+  h1 { font-size:22px; margin:0; letter-spacing:-.3px; }
+  .sub { color:var(--dim); font-size:13px; }
+  button { font:inherit; color:var(--text); background:#232733; border:1px solid var(--line);
+           border-radius:12px; padding:10px 12px; cursor:pointer; }
+  button:active { transform:scale(.97); }
+  button.danger { background:#3a1d22; border-color:#5a2a31; }
+  button.ghost { background:transparent; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; margin-bottom:14px; }
+  .top { display:flex; align-items:center; gap:12px; }
+  .icon { font-size:30px; width:44px; text-align:center; }
+  .name { font-weight:650; font-size:17px; }
+  .pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:3px 9px;
+          border-radius:99px; background:#222632; color:var(--dim); margin-top:2px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); }
+  .on .dot { background:var(--green); box-shadow:0 0 8px var(--green); } .on { color:var(--green); }
+  .sleep .dot { background:var(--amber); } .sleep { color:var(--amber); }
+  .off .dot, .lost .dot { background:var(--red); } .off, .lost { color:var(--red); }
+  .activity { margin:14px 0 4px; font-size:16px; }
+  .meta { display:flex; flex-wrap:wrap; gap:6px 14px; color:var(--dim); font-size:13px; }
+  .actions { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:14px; }
+  .actions button { padding:10px 4px; font-size:13px; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  label { display:block; font-size:13px; color:var(--dim); margin:12px 0 4px; }
+  input { width:100%; font:inherit; color:var(--text); background:#0c0e12; border:1px solid var(--line);
+          border-radius:10px; padding:11px; }
+  #toast { position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom)); transform:translateX(-50%);
+           background:#2a2f3c; padding:10px 16px; border-radius:12px; opacity:0; transition:.25s; pointer-events:none; }
+  #toast.show { opacity:1; }
+  .empty { text-align:center; color:var(--dim); padding:30px 10px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>DeviceWatch</h1><div class="sub" id="updated">Connecting…</div></div>
+  <div class="row" style="flex:0">
+    <button class="ghost" id="refresh" title="Refresh">↻</button>
+    <button class="ghost" id="settingsBtn" title="Settings">⚙︎</button>
+  </div>
+</header>
+
+<section id="settings" class="card hidden">
+  <div class="name">Settings</div>
+  <div class="sub">Use the same topic and secret as your laptops' config.json. Stored only on this phone.</div>
+  <label>ntfy server</label><input id="s_server" value="https://ntfy.sh" autocomplete="off">
+  <label>Topic</label><input id="s_topic" placeholder="dw-xxxxxxxxxxxxxxxx" autocomplete="off">
+  <label>Secret</label><input id="s_secret" type="password" autocomplete="off">
+  <label>Access token (only for a private ntfy server)</label><input id="s_token" type="password" autocomplete="off">
+  <div class="row" style="margin-top:16px"><button id="save">Save</button></div>
+</section>
+
+<main id="devices"></main>
+<div id="toast"></div>
+
+<script>
+const HEARTBEAT_STALE_MIN = 35;   // keep > 2x heartbeat_minutes in the agents
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch {} }
+};
+let cfg = JSON.parse(store.get("dw-cfg") || "null");
+const devices = {};           // name -> latest heartbeat (+ _t server time)
+let lastId = null, fastUntil = 0, timer = null;
+
+const $ = id => document.getElementById(id);
+function toast(t){ const el=$("toast"); el.textContent=t; el.classList.add("show"); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove("show"),2500); }
+function headers(extra={}){ return cfg.token ? {...extra, Authorization:"Bearer "+cfg.token} : extra; }
+function ago(sec){ sec=Math.max(0,Math.round(sec)); if(sec<60) return "just now"; const m=Math.round(sec/60); if(m<60) return m+" min ago"; const h=Math.floor(m/60); return h+"h "+(m%60)+"m ago"; }
+function dur(sec){ const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60); return h? `${h}h ${m}m` : `${m}m`; }
+
+function showSettings(show){
+  $("settings").classList.toggle("hidden", !show);
+  if (show && cfg) { $("s_server").value=cfg.server; $("s_topic").value=cfg.topic; $("s_secret").value=cfg.secret; $("s_token").value=cfg.token||""; }
+}
+$("settingsBtn").onclick = () => showSettings($("settings").classList.contains("hidden"));
+$("save").onclick = () => {
+  const c = { server:$("s_server").value.trim().replace(/\/+$/,""), topic:$("s_topic").value.trim(),
+              secret:$("s_secret").value.trim(), token:$("s_token").value.trim() };
+  if (!c.topic || !c.secret) return toast("Topic and secret are required");
+  cfg = c; store.set("dw-cfg", JSON.stringify(c)); showSettings(false);
+  Object.keys(devices).forEach(k=>delete devices[k]); lastId=null; start();
+};
+
+async function send(cmd, to="*"){
+  const body = JSON.stringify({cmd, to, key:cfg.secret, reply:"app"});
+  try {
+    const r = await fetch(`${cfg.server}/${cfg.topic}-cmd`, {method:"POST", body, headers:headers()});
+    if (!r.ok) throw new Error(r.status);
+    if (cmd !== "status") toast(`Sent "${cmd}" to ${to === "*" ? "all devices" : to}`);
+    fastUntil = Date.now() + 25000; schedule(1500);
+  } catch(e) { toast("Couldn't reach the server"); }
+}
+
+async function poll(){
+  const since = lastId || `${HEARTBEAT_STALE_MIN*2}m`;
+  try {
+    const r = await fetch(`${cfg.server}/${cfg.topic}-hb/json?poll=1&since=${since}`, {headers:headers()});
+    const text = await r.text();
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      let ev; try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.event !== "message") continue;
+      lastId = ev.id;
+      let hb; try { hb = JSON.parse(ev.message); } catch { continue; }
+      if (!hb.d || hb.type === "dryrun") continue;
+      hb._t = ev.time;
+      devices[hb.d] = hb;
+    }
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  } catch(e) { $("updated").textContent = "Offline - retrying…"; }
+  render();
+  schedule(Date.now() < fastUntil ? 3000 : 30000);
+}
+function schedule(ms){ clearTimeout(timer); timer = setTimeout(poll, ms); }
+
+function statusOf(hb){
+  const age = Date.now()/1000 - hb._t;
+  if (hb.s === "sleep") return ["sleep", "Sleeping"];
+  if (hb.s === "off")   return ["off", "Turned off"];
+  if (age > HEARTBEAT_STALE_MIN*60) return ["lost", "Offline"];
+  return ["on", "Online"];
+}
+
+function render(){
+  const main = $("devices"); main.textContent = "";
+  const names = Object.keys(devices).sort();
+  if (!names.length) {
+    const d = document.createElement("div"); d.className = "empty";
+    d.textContent = "No devices yet. Make sure the agents are running and use the same topic.";
+    main.appendChild(d); return;
+  }
+  for (const name of names) {
+    const hb = devices[name], [cls, label] = statusOf(hb);
+    const card = document.createElement("div"); card.className = "card";
+    const live = cls === "on";
+    const activity = !live ? "—" : hb.app ? `🎮 ${hb.app}` : hb.fg ? `In front: ${hb.fg}` : "No tracked app open";
+    const meta = [];
+    if (hb.bat != null) meta.push(`🔋 ${hb.bat}%${hb.chg ? " ⚡" : ""}`);
+    if (live && hb.idle >= 60) meta.push(`💤 idle ${dur(hb.idle)}`);
+    if (live && hb.up) meta.push(`⏱ up ${dur(hb.up)}`);
+    meta.push(`seen ${ago(Date.now()/1000 - hb._t)}`);
+    card.innerHTML = `
+      <div class="top"><div class="icon"></div>
+        <div><div class="name"></div><span class="pill ${cls}"><span class="dot"></span><span class="lbl"></span></span></div></div>
+      <div class="activity"></div><div class="meta"></div>
+      <div class="actions">
+        <button data-c="lock">🔒<br>Lock</button><button data-c="sleep">😴<br>Sleep</button>
+        <button data-c="restart">🔄<br>Restart</button><button data-c="shutdown" class="danger">⏻<br>Off</button>
+      </div>
+      <div class="row" style="margin-top:8px"><button data-c="status">📊 Status</button><button data-c="cancel">✋ Cancel pending</button></div>`;
+    card.querySelector(".icon").textContent = hb.e || "💻";
+    card.querySelector(".name").textContent = name;
+    card.querySelector(".lbl").textContent = label;
+    card.querySelector(".activity").textContent = activity;
+    for (const m of meta) { const s=document.createElement("span"); s.textContent=m; card.querySelector(".meta").appendChild(s); }
+    card.querySelectorAll("button[data-c]").forEach(b => b.onclick = () => {
+      const c = b.dataset.c;
+      if (["sleep","restart","shutdown"].includes(c) && !confirm(`${c[0].toUpperCase()+c.slice(1)} ${name}?`)) return;
+      send(c, name);
+    });
+    main.appendChild(card);
+  }
+}
+
+$("refresh").onclick = () => send("status");
+function start(){ if (!cfg) return showSettings(true); send("status"); poll(); }
+document.addEventListener("visibilitychange", () => { if (!document.hidden && cfg) send("status"); });
+start();
+</script>
+</body>
+</html>

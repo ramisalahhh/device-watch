@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Release signing: CI passes a keystore through environment variables so every
+// build has the SAME signature (lets you update the app without uninstalling).
+// Without them, the release APK is signed with the debug key (still installable).
+def ksFile = System.getenv("DW_KEYSTORE")
+
+android {
+    namespace 'com.rami.devicewatch'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.rami.devicewatch'
+        minSdk 26
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv("DW_VERSION_CODE") ?: "1")
+        versionName "1.0." + (System.getenv("DW_VERSION_CODE") ?: "0")
+    }
+
+    signingConfigs {
+        release {
+            if (ksFile) {
+                storeFile file(ksFile)
+                storePassword System.getenv("DW_KEYSTORE_PASSWORD")
+                keyAlias "devicewatch"
+                keyPassword System.getenv("DW_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig ksFile ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

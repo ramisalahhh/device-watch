@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon foreground (108dp canvas, art kept inside the 66dp safe zone) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- laptop lid -->
+    <path
+        android:fillColor="#E8EAF0"
+        android:pathData="M33,36h42a3,3 0,0 1,3 3v26H30V39a3,3 0,0 1,3 -3z" />
+    <!-- screen -->
+    <path
+        android:fillColor="#15233D"
+        android:pathData="M34,40h40v21H34z" />
+    <!-- base -->
+    <path
+        android:fillColor="#E8EAF0"
+        android:pathData="M25,67h58v2a4,4 0,0 1,-4 4H29a4,4 0,0 1,-4 -4z" />
+    <!-- activity pulse on screen -->
+    <path
+        android:strokeColor="#4C8DFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M38,51h7l3,-6l5,12l4,-9l2,3h11" />
+    <!-- online dot -->
+    <path
+        android:fillColor="#2ECC71"
+        android:pathData="M78,34m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+</vector>

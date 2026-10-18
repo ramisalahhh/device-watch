@@ -1,0 +1,31 @@
+services:
+  monitor:
+    build: .
+    container_name: devicewatch-monitor
+    restart: unless-stopped
+    environment:
+      DW_SERVER: https://ntfy.sh
+      DW_TOPIC: dw-CHANGE-ME          # same topic as your laptops
+      DW_TOKEN: ""
+      DW_OFFLINE_AFTER: "35"          # minutes; > 2x agents' heartbeat_minutes
+    mem_limit: 48m
+    cpus: 0.1
+    read_only: true
+    logging:
+      driver: json-file
+      options: { max-size: "1m", max-file: "1" }
+
+  # --- Optional: your own ntfy server (no rate limits, private topics) ---
+  # Uncomment, put it behind HTTPS (e.g. Caddy/Cloudflare Tunnel), then set
+  # "server" in the agents' config.json and DW_SERVER above to its URL.
+  # ntfy:
+  #   image: binwiederhier/ntfy
+  #   command: serve
+  #   restart: unless-stopped
+  #   ports: ["8080:80"]
+  #   environment:
+  #     NTFY_BASE_URL: https://ntfy.example.com
+  #     NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+  #     NTFY_CACHE_DURATION: 12h
+  #   volumes: ["./ntfy-cache:/var/cache/ntfy"]
+  #   mem_limit: 64m

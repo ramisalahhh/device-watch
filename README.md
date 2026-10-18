@@ -1,6 +1,24 @@
 # DeviceWatch 💻⌚
 
+[![Build](https://github.com/ramisalahhh/device-watch/actions/workflows/build.yml/badge.svg)](https://github.com/ramisalahhh/device-watch/actions/workflows/build.yml)
+[![Download APK](https://img.shields.io/badge/Download-APK-3DDC84?logo=android&logoColor=white)](https://github.com/ramisalahhh/device-watch/releases/latest)
+![Python](https://img.shields.io/badge/Python-stdlib%20only-3776AB?logo=python&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-monitor-2496ED?logo=docker&logoColor=white)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Android-lightgrey)
+
 See what your laptops are doing **on your phone and Redmi Watch**, and **lock / sleep / restart / shut them down** from your phone.
+
+## ✨ Highlights
+
+- **CI/CD with GitHub Actions:** every push to `main` runs the end-to-end tests (including a 30 MB RAM guard) and builds the Android APK, which is published automatically to [Releases](https://github.com/ramisalahhh/device-watch/releases).
+- **Containerized monitoring:** the offline-alert monitor ships with a `Dockerfile` and `docker-compose.yml`, with an optional self-hosted ntfy server.
+- **Lightweight by design:** Python standard library only, ~20 MB RAM, ~0.1% CPU, zero disk writes while running.
+- **Event-driven and reliable:** commands arrive over one idle connection (no polling), with lossless reconnects, receipts and retries.
+- **Secure remote control:** secret-authenticated commands with replay protection (commands older than 3 minutes are ignored).
+
+## 🧰 Tech stack
+
+Python (ctypes / Windows APIs) · Java (native Android, no libraries) · GitHub Actions · Docker & Docker Compose · ntfy (HTTP pub/sub) · HTML/JS
 
 ```
  ┌───────────┐                       ┌──────────┐   notification   ┌──────────────┐  Mi Fitness  ┌─────────┐

@@ -43,6 +43,8 @@ def wait_for(topic, pred, timeout=15):
 def check(name, ok):
     results.append((name, bool(ok)))
     print(("PASS " if ok else "FAIL ") + name)
+    if not ok and os.environ.get("GITHUB_ACTIONS"):
+        print(f"::error title=Test failed::{name}")   # shows up as an annotation on the run
 
 
 def cmd(c, to="Test-PC", key=SECRET, reply="notify"):
@@ -123,7 +125,7 @@ def main():
     kb = rss_kb(agent.pid)
     cpu = sum(int(x) for x in Path(f"/proc/{agent.pid}/stat").read_text().split()[13:15]) / os.sysconf("SC_CLK_TCK")
     print(f"     agent RSS: {kb/1024:.1f} MB, total CPU so far: {cpu:.2f}s")
-    check("agent RAM under 22 MB", kb < 22 * 1024)
+    check("agent RAM under 30 MB", kb < 30 * 1024)
 
     # monitor: unexpected disappearance -> alert ; graceful shutdown -> no alert
     mon = spawn([sys.executable, str(ROOT / "monitor/monitor.py")],

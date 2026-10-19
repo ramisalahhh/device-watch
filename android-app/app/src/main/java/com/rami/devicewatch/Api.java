@@ -52,8 +52,20 @@ final class Api {
 
     /** Send a command to one device (or "*" for all). */
     static void command(Prefs p, String cmd, String to, String reply) throws IOException {
+        command(p, cmd, to, reply, null);
+    }
+
+    /** Same, with extra fields (message text, wake target, history day...). */
+    static void command(Prefs p, String cmd, String to, String reply, JSONObject extra) throws IOException {
         JSONObject o = new JSONObject();
         try {
+            if (extra != null) {
+                java.util.Iterator<String> it = extra.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    o.put(k, extra.get(k));
+                }
+            }
             o.put("cmd", cmd).put("to", to).put("key", p.secret()).put("reply", reply);
         } catch (JSONException ignored) {
         }

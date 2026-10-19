@@ -6,186 +6,499 @@
 <meta name="theme-color" content="#0f1115">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DeviceWatch">
 <title>DeviceWatch</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --line:#262a34; --text:#e8eaf0; --dim:#8b91a1;
-          --green:#2ecc71; --amber:#f5a623; --red:#ff5b5b; --blue:#4c8dff; }
+  :root { --bg:#0f1115; --card:#181b22; --line:#262a34; --btn:#232733; --text:#e8eaf0; --dim:#8b91a1;
+          --green:#2ecc71; --amber:#f5a623; --red:#ff5b5b; --blue:#4c8dff; --sel:#15233d; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-         padding:16px 16px calc(24px + env(safe-area-inset-bottom)); max-width:560px; margin-inline:auto; }
-  header { display:flex; align-items:center; justify-content:space-between; margin:4px 0 16px; }
-  h1 { font-size:22px; margin:0; letter-spacing:-.3px; }
+  html { background:var(--bg); }
+  body { margin:0 auto; max-width:560px; background:var(--bg); color:var(--text);
+         font:15px/1.45 -apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
+         padding:calc(12px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+  header { display:flex; align-items:center; gap:8px; margin:4px 0 14px; }
+  header .grow { flex:1; min-width:0; }
+  h1 { font-size:24px; margin:0; letter-spacing:-.3px; }
+  h2 { font-size:20px; margin:0; }
   .sub { color:var(--dim); font-size:13px; }
-  button { font:inherit; color:var(--text); background:#232733; border:1px solid var(--line);
-           border-radius:12px; padding:10px 12px; cursor:pointer; }
+  button { font:inherit; color:var(--text); background:var(--btn); border:1px solid var(--line);
+           border-radius:12px; padding:10px 8px; cursor:pointer; touch-action:manipulation; }
   button:active { transform:scale(.97); }
+  button:disabled { opacity:.45; }
+  button.sq { width:46px; height:46px; padding:0; font-size:18px; flex:none; }
   button.danger { background:#3a1d22; border-color:#5a2a31; }
-  button.ghost { background:transparent; }
+  button.primary { background:var(--blue); border-color:var(--blue); }
   .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; margin-bottom:14px; }
-  .top { display:flex; align-items:center; gap:12px; }
-  .icon { font-size:30px; width:44px; text-align:center; }
+  .card.selected { background:var(--sel); border-color:var(--blue); }
+  .top { display:flex; align-items:center; gap:12px; cursor:pointer; }
+  .icon { font-size:30px; }
   .name { font-weight:650; font-size:17px; }
-  .pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:3px 9px;
-          border-radius:99px; background:#222632; color:var(--dim); margin-top:2px; }
-  .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); }
-  .on .dot { background:var(--green); box-shadow:0 0 8px var(--green); } .on { color:var(--green); }
-  .sleep .dot { background:var(--amber); } .sleep { color:var(--amber); }
-  .off .dot, .lost .dot { background:var(--red); } .off, .lost { color:var(--red); }
-  .activity { margin:14px 0 4px; font-size:16px; }
-  .meta { display:flex; flex-wrap:wrap; gap:6px 14px; color:var(--dim); font-size:13px; }
-  .actions { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:14px; }
-  .actions button { padding:10px 4px; font-size:13px; }
-  .row { display:flex; gap:8px; }
-  .row > * { flex:1; }
+  .st { font-size:13px; }
+  .on { color:var(--green); } .sleep { color:var(--amber); } .off, .lost { color:var(--red); }
+  .activity { margin:12px 0 2px; font-size:16px; }
+  .meta { color:var(--dim); font-size:13px; }
+  .row { display:grid; gap:8px; margin-top:8px; }
+  .r4 { grid-template-columns:repeat(4,1fr); } .r3 { grid-template-columns:repeat(3,1fr); }
+  .r2 { grid-template-columns:repeat(2,1fr); } .r1 { grid-template-columns:1fr; }
+  .row button { font-size:13px; white-space:pre-line; }
+  .section { color:var(--dim); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+             margin:20px 0 8px; }
+  .kv { display:grid; grid-template-columns:110px 1fr; gap:6px 10px; font-size:14px; }
+  .kv div:nth-child(odd) { color:var(--dim); }
+  .tip { color:var(--dim); font-size:13px; margin-top:8px; }
+  .bar { display:grid; grid-template-columns:110px 1fr 64px; align-items:center; gap:8px; font-size:13px; margin:6px 0; }
+  .bar .lbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar .track { height:10px; background:#222632; border-radius:6px; overflow:hidden; }
+  .bar .fill { height:100%; border-radius:6px; }
+  .bar .val { color:var(--dim); text-align:right; }
+  .ev { display:grid; grid-template-columns:48px 1fr; gap:8px; font-size:14px; margin-top:6px; }
+  .ev .t { color:var(--dim); font-size:13px; }
+  .ev.dim { color:var(--dim); }
+  .nav { display:flex; align-items:center; gap:8px; }
+  .nav b { flex:1; text-align:center; }
+  .bulk { position:sticky; bottom:calc(8px + env(safe-area-inset-bottom)); background:var(--card);
+          border:1px solid var(--line); border-radius:18px; padding:12px; box-shadow:0 8px 30px #0008; }
+  .bulk .head { display:flex; align-items:center; gap:8px; font-size:13px; }
+  .bulk .head span { flex:1; }
   label { display:block; font-size:13px; color:var(--dim); margin:12px 0 4px; }
-  input { width:100%; font:inherit; color:var(--text); background:#0c0e12; border:1px solid var(--line);
-          border-radius:10px; padding:11px; }
-  #toast { position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom)); transform:translateX(-50%);
-           background:#2a2f3c; padding:10px 16px; border-radius:12px; opacity:0; transition:.25s; pointer-events:none; }
-  #toast.show { opacity:1; }
+  input, textarea { width:100%; font:inherit; font-size:16px; color:var(--text); background:#0c0e12;
+                    border:1px solid var(--line); border-radius:10px; padding:11px; }
   .empty { text-align:center; color:var(--dim); padding:30px 10px; }
-  .hidden { display:none; }
+  .check { width:22px; height:22px; border-radius:6px; border:2px solid var(--dim); flex:none;
+           display:grid; place-items:center; font-size:14px; }
+  .selected .check { background:var(--blue); border-color:var(--blue); }
+  #toast { position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom)); transform:translateX(-50%);
+           background:#2a2f3c; padding:10px 16px; border-radius:12px; opacity:0; transition:.25s;
+           pointer-events:none; max-width:90vw; text-align:center; z-index:9; }
+  #toast.show { opacity:1; }
+  dialog { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:18px;
+           padding:18px; width:min(92vw,420px); }
+  dialog::backdrop { background:#000a; }
+  .hidden { display:none !important; }
+  code { background:#0c0e12; padding:2px 6px; border-radius:6px; word-break:break-all; }
 </style>
 </head>
 <body>
-<header>
-  <div><h1>DeviceWatch</h1><div class="sub" id="updated">Connecting…</div></div>
-  <div class="row" style="flex:0">
-    <button class="ghost" id="refresh" title="Refresh">↻</button>
-    <button class="ghost" id="settingsBtn" title="Settings">⚙︎</button>
-  </div>
-</header>
-
-<section id="settings" class="card hidden">
-  <div class="name">Settings</div>
-  <div class="sub">Use the same topic and secret as your laptops' config.json. Stored only on this phone.</div>
-  <label>ntfy server</label><input id="s_server" value="https://ntfy.sh" autocomplete="off">
-  <label>Topic</label><input id="s_topic" placeholder="dw-xxxxxxxxxxxxxxxx" autocomplete="off">
-  <label>Secret</label><input id="s_secret" type="password" autocomplete="off">
-  <label>Access token (only for a private ntfy server)</label><input id="s_token" type="password" autocomplete="off">
-  <div class="row" style="margin-top:16px"><button id="save">Save</button></div>
-</section>
-
-<main id="devices"></main>
+<div id="app"></div>
+<dialog id="dlg"><div id="dlgBody"></div></dialog>
 <div id="toast"></div>
 
 <script>
-const HEARTBEAT_STALE_MIN = 35;   // keep > 2x heartbeat_minutes in the agents
-const store = {
-  get(k){ try { return localStorage.getItem(k); } catch { return null; } },
-  set(k,v){ try { localStorage.setItem(k,v); } catch {} }
+"use strict";
+// ============================================================== storage + helpers
+const STALE = 35 * 60;                                   // no heartbeat this long = offline
+const ls = {
+  get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
-let cfg = JSON.parse(store.get("dw-cfg") || "null");
-const devices = {};           // name -> latest heartbeat (+ _t server time)
-let lastId = null, fastUntil = 0, timer = null;
+let cfg = ls.get("dw-cfg");
+const devices = {};                                     // name -> latest heartbeat (+ _t)
+let lastId = null, fastUntil = 0, timer = null, statusText = "Connecting…", inFlight = false;
+let selecting = false; const selected = new Set();
+const histCache = {}; const weekCache = {}; let histRid = null, weekRid = null;
+let view = { page: "list" };                             // or { page:"device", name, day }
+let wakeTest = null;                                     // { name, step, sentAt, msg, timers:[] }
 
-const $ = id => document.getElementById(id);
-function toast(t){ const el=$("toast"); el.textContent=t; el.classList.add("show"); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove("show"),2500); }
-function headers(extra={}){ return cfg.token ? {...extra, Authorization:"Bearer "+cfg.token} : extra; }
-function ago(sec){ sec=Math.max(0,Math.round(sec)); if(sec<60) return "just now"; const m=Math.round(sec/60); if(m<60) return m+" min ago"; const h=Math.floor(m/60); return h+"h "+(m%60)+"m ago"; }
-function dur(sec){ const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60); return h? `${h}h ${m}m` : `${m}m`; }
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const now = () => Date.now() / 1000;
+function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("show"), 2600); }
+function dur(s) { s = Math.max(0, Math.round(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h}h ${m}m` : `${m}m`; }
+function ago(s) { s = Math.max(0, Math.round(s)); if (s < 60) return "just now"; const m = Math.round(s / 60); if (m < 60) return m + " min ago"; return Math.floor(m / 60) + "h " + (m % 60) + "m ago"; }
+function clock(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }); }
+function ymd(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+const headers = (extra = {}) => cfg.token ? { ...extra, Authorization: "Bearer " + cfg.token } : extra;
+const has = (o, k) => o && o[k] !== undefined && o[k] !== null;
 
-function showSettings(show){
-  $("settings").classList.toggle("hidden", !show);
-  if (show && cfg) { $("s_server").value=cfg.server; $("s_topic").value=cfg.topic; $("s_secret").value=cfg.secret; $("s_token").value=cfg.token||""; }
+function stateOf(hb) {
+  if (!hb) return "lost";
+  if (hb.s === "sleep" || hb.s === "off") return hb.s;
+  return now() - hb._t > STALE ? "lost" : "on";
 }
-$("settingsBtn").onclick = () => showSettings($("settings").classList.contains("hidden"));
-$("save").onclick = () => {
-  const c = { server:$("s_server").value.trim().replace(/\/+$/,""), topic:$("s_topic").value.trim(),
-              secret:$("s_secret").value.trim(), token:$("s_token").value.trim() };
-  if (!c.topic || !c.secret) return toast("Topic and secret are required");
-  cfg = c; store.set("dw-cfg", JSON.stringify(c)); showSettings(false);
-  Object.keys(devices).forEach(k=>delete devices[k]); lastId=null; start();
-};
+const stateLabel = { on: "● Online", sleep: "● Sleeping", off: "● Turned off", lost: "● Offline" };
 
-async function send(cmd, to="*"){
-  const body = JSON.stringify({cmd, to, key:cfg.secret, reply:"app"});
-  try {
-    const r = await fetch(`${cfg.server}/${cfg.topic}-cmd`, {method:"POST", body, headers:headers()});
-    if (!r.ok) throw new Error(r.status);
-    if (cmd !== "status") toast(`Sent "${cmd}" to ${to === "*" ? "all devices" : to}`);
-    fastUntil = Date.now() + 25000; schedule(1500);
-  } catch(e) { toast("Couldn't reach the server"); }
+function statsLine(hb) {
+  const p = [];
+  if (has(hb, "cpu")) p.push(`CPU ${hb.cpu}%`);
+  if (has(hb, "ram")) p.push(`RAM ${hb.ram}%`);
+  if (has(hb, "gpu")) p.push(`GPU ${hb.gpu}%`);
+  const t = [has(hb, "ct") ? hb.ct + "°C" : null, has(hb, "gt") ? hb.gt + "°C" : null].filter(Boolean);
+  if (t.length) p.push("🌡 " + t.join(" / "));
+  return p.join(" · ");
+}
+function activityText(hb, live) {
+  if (!live) return "—";
+  if (hb.app) return ((hb.na || []).includes(hb.app) ? "🎮 " : "🪟 Using ") + hb.app;
+  return hb.fg ? "In front: " + hb.fg : "No tracked app open";
+}
+function todayLine(hb) {
+  const td = hb && hb.td; if (!td || !td.on) return "";
+  return "Today: on " + dur(td.on) + (td.top || []).map(([a, s]) => ` · ${a} ${dur(s)}`).join("");
+}
+const verdict = v => ({ yes: "✅ Yes", maybe: "⚠️ Maybe, test it", no: "❌ No" }[v] || "❔ Unknown");
+function wolOf(name) { const hb = devices[name]; return (hb && hb.wol) || ls.get("wol:" + name); }
+function wakeBadge(name) {
+  const t = ls.get("wt:" + name);
+  if (t) return t.ok ? "⚡ Wake-up: ✅ tested, works" : "⚡ Wake-up: ❌ test failed";
+  const w = wolOf(name); return w ? "⚡ Wake from sleep: " + verdict(w.sleep) : "";
+}
+function eventText(e) {
+  const [, code, arg, x = {}] = e;
+  switch (code) {
+    case "on": return "🟢 Turned on" + (arg === "start" ? " (DeviceWatch started)" : "");
+    case "rs": return "🔁 DeviceWatch restarted";
+    case "wk": return "☀️ Woke up" + (x.by === "network" ? " (from your phone 📱)" : "");
+    case "sl": return "😴 Went to sleep";
+    case "off": return "🔴 Shut down";
+    case "lost": return "⚠️ Disappeared (battery died, crash or forced off)";
+    case "st": return "▶️ Opened " + arg;
+    case "cl": {
+      let s = "⏹ Closed " + arg;
+      if (has(x, "dur")) s += " · " + dur(x.dur);
+      if (has(x, "cpu")) s += ` · CPU ${x.cpu}%`;
+      if (has(x, "gpu")) s += ` · GPU ${x.gpu}%`;
+      const t = [has(x, "ct") ? x.ct + "°C" : null, has(x, "gt") ? x.gt + "°C" : null].filter(Boolean);
+      if (t.length) s += " · 🌡 max " + t.join(" / ");
+      return s;
+    }
+    default: return code + " " + (arg || "");
+  }
 }
 
-async function poll(){
-  const since = lastId || `${HEARTBEAT_STALE_MIN*2}m`;
+// ============================================================== network
+async function send(cmd, to = "*", extra = {}) {
+  const body = JSON.stringify({ ...extra, cmd, to, key: cfg.secret, reply: "app" });
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(`${cfg.server}/${cfg.topic}-cmd`, { method: "POST", body, headers: headers() });
+      if (r.status === 429) { toast("Server busy (rate limit). Try again in a minute."); return false; }
+      if (!r.ok) throw new Error(r.status);
+      if (!["status", "history", "wake"].includes(cmd)) toast(`Sent “${cmd}” to ${to === "*" ? "all" : to}…`);
+      fastUntil = Date.now() + 25000; schedule(1200);
+      return true;
+    } catch (e) { await new Promise(res => setTimeout(res, 1200 * (i + 1))); }
+  }
+  toast("Couldn't send. Check your internet."); return false;
+}
+
+function wake(name) {
+  const w = wolOf(name);
+  if (!w || !w.mac) { toast("No network address known for " + name + " yet."); return; }
+  // Browsers can't send the wake packet themselves, so the other laptops send it for us.
+  send("wake", "*", { target: name, mac: w.mac, bcast: w.bcast });
+  toast("⚡ Wake-up sent to " + name + " (through your other laptops)");
+}
+
+function schedule(ms) { clearTimeout(timer); timer = setTimeout(poll, ms); }
+
+async function poll() {
+  clearTimeout(timer);
+  if (!cfg || inFlight) return;
+  inFlight = true;
+  const since = lastId || `${STALE * 2 / 60}m`;
   try {
-    const r = await fetch(`${cfg.server}/${cfg.topic}-hb/json?poll=1&since=${since}`, {headers:headers()});
+    const r = await fetch(`${cfg.server}/${cfg.topic}-hb/json?poll=1&since=${since}`, { headers: headers() });
     const text = await r.text();
     for (const line of text.split("\n")) {
       if (!line) continue;
       let ev; try { ev = JSON.parse(line); } catch { continue; }
       if (ev.event !== "message") continue;
       lastId = ev.id;
-      let hb; try { hb = JSON.parse(ev.message); } catch { continue; }
-      if (!hb.d || hb.type === "dryrun") continue;
-      if (hb.type === "ack") { if (Date.now()/1000 - ev.time < 60) toast(`✓ ${hb.d} received "${hb.cmd}"`); continue; }
-      hb._t = ev.time;
-      devices[hb.d] = hb;
+      let m; try { m = JSON.parse(ev.message); } catch { continue; }
+      if (!m.d || m.type === "dryrun") continue;
+      m._t = ev.time;
+      onMessage(m);
     }
-    $("updated").textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
-  } catch(e) { $("updated").textContent = "Offline - retrying…"; }
+    statusText = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (e) { statusText = "Offline - retrying…"; }
+  inFlight = false;
   render();
   schedule(Date.now() < fastUntil ? 3000 : 30000);
 }
-function schedule(ms){ clearTimeout(timer); timer = setTimeout(poll, ms); }
 
-function statusOf(hb){
-  const age = Date.now()/1000 - hb._t;
-  if (hb.s === "sleep") return ["sleep", "Sleeping"];
-  if (hb.s === "off")   return ["off", "Turned off"];
-  if (age > HEARTBEAT_STALE_MIN*60) return ["lost", "Offline"];
-  return ["on", "Online"];
+function onMessage(m) {
+  const recent = now() - m._t < 60;
+  if (m.type === "ack") { if (recent) toast(`✓ ${m.d} received “${m.cmd}”`); return; }
+  if (m.type === "relay") { if (recent) toast(`📡 ${m.d} sent a wake-up to ${m.target}`); return; }
+  if (m.type === "hist") { if (m.rid === histRid) histCache[m.d + "|" + m.day] = m; return; }
+  if (m.type === "histw") { if (m.rid === weekRid) weekCache[m.d] = m; return; }
+  const prev = devices[m.d];
+  if (prev && prev.b === m.b) for (const k in prev) if (!(k in m)) m[k] = prev[k];   // quick updates keep stats
+  devices[m.d] = m;
+  if (m.wol) ls.set("wol:" + m.d, m.wol);
+  stepWakeTest(m);
 }
 
-function render(){
-  const main = $("devices"); main.textContent = "";
-  const names = Object.keys(devices).sort();
-  if (!names.length) {
-    const d = document.createElement("div"); d.className = "empty";
-    d.textContent = "No devices yet. Make sure the agents are running and use the same topic.";
-    main.appendChild(d); return;
-  }
-  for (const name of names) {
-    const hb = devices[name], [cls, label] = statusOf(hb);
-    const card = document.createElement("div"); card.className = "card";
-    const live = cls === "on";
-    const activity = !live ? "—" : hb.app ? `🎮 ${hb.app}` : hb.fg ? `In front: ${hb.fg}` : "No tracked app open";
-    const meta = [];
-    if (hb.bat != null) meta.push(`🔋 ${hb.bat}%${hb.chg ? " ⚡" : ""}`);
-    if (live && hb.idle >= 60) meta.push(`💤 idle ${dur(hb.idle)}`);
-    if (live && hb.up) meta.push(`⏱ up ${dur(hb.up)}`);
-    meta.push(`seen ${ago(Date.now()/1000 - hb._t)}`);
-    card.innerHTML = `
-      <div class="top"><div class="icon"></div>
-        <div><div class="name"></div><span class="pill ${cls}"><span class="dot"></span><span class="lbl"></span></span></div></div>
-      <div class="activity"></div><div class="meta"></div>
-      <div class="actions">
-        <button data-c="lock">🔒<br>Lock</button><button data-c="sleep">😴<br>Sleep</button>
-        <button data-c="restart">🔄<br>Restart</button><button data-c="shutdown" class="danger">⏻<br>Off</button>
-      </div>
-      <div class="row" style="margin-top:8px"><button data-c="status">📊 Status</button><button data-c="cancel">✋ Cancel pending</button></div>`;
-    card.querySelector(".icon").textContent = hb.e || "💻";
-    card.querySelector(".name").textContent = name;
-    card.querySelector(".lbl").textContent = label;
-    card.querySelector(".activity").textContent = activity;
-    for (const m of meta) { const s=document.createElement("span"); s.textContent=m; card.querySelector(".meta").appendChild(s); }
-    card.querySelectorAll("button[data-c]").forEach(b => b.onclick = () => {
-      const c = b.dataset.c;
-      if (["sleep","restart","shutdown"].includes(c) && !confirm(`${c[0].toUpperCase()+c.slice(1)} ${name}?`)) return;
-      send(c, name);
+// ============================================================== commands with UI
+function ask(title, html, okLabel, onOk, danger = false) {
+  $("#dlgBody").innerHTML = `<h2 style="margin-bottom:8px">${esc(title)}</h2><div class="sub" style="margin-bottom:14px">${html}</div>
+    <div class="row r2"><button data-x="no">Cancel</button><button data-x="ok" class="${danger ? "danger" : "primary"}">${esc(okLabel)}</button></div>`;
+  const d = $("#dlg"); d.showModal();
+  d.onclick = e => {
+    const x = e.target.dataset.x;
+    if (x === "ok") { const r = onOk(); if (r !== false) d.close(); } else if (x === "no" || e.target === d) d.close();
+  };
+}
+function run(cmd, targets) {
+  const who = targets.length === 1 ? targets[0] : targets.length + " devices";
+  if (["sleep", "restart", "shutdown"].includes(cmd)) {
+    const verb = cmd === "shutdown" ? "Shut down" : cmd[0].toUpperCase() + cmd.slice(1);
+    ask(`${verb} ${who}?`, "It happens after a short countdown. You can still cancel.", verb,
+        () => targets.forEach(t => send(cmd, t)), cmd === "shutdown");
+  } else if (cmd === "msg") {
+    ask(`Message on ${who}'s screen`, `<textarea id="msgText" rows="3" placeholder="e.g. Dinner is ready 🍽️"></textarea>`, "Send", () => {
+      const text = $("#msgText").value.trim(); if (!text) return false;
+      targets.forEach(t => send("msg", t, { text }));
     });
-    main.appendChild(card);
+    setTimeout(() => $("#msgText") && $("#msgText").focus(), 50);
+  } else if (cmd === "wake") targets.forEach(wake);
+  else targets.forEach(t => send(cmd, t));
+}
+
+// ============================================================== wake-up test
+function startWakeTest(name) {
+  ask("Test wake-up?", `${esc(name)} will go to sleep, then your other laptops will try to wake it up (an iPhone can't send the wake signal itself, so <b>another laptop must be on</b>). Takes about 2 minutes. Keep it plugged in and stay on this screen.`,
+      "Start", () => {
+        wakeTest = { name, step: 1, msg: `1/3 Putting ${name} to sleep (30 s countdown)…`, timers: [] };
+        send("sleep", name);
+        wakeTest.timers.push(setTimeout(() => failTest("It didn't go to sleep. Is something blocking sleep?"), 120000));
+        render();
+      });
+}
+function clearTest() { if (wakeTest) wakeTest.timers.forEach(clearTimeout); }
+function failTest(why) {
+  if (!wakeTest || !wakeTest.step) return;
+  clearTest(); ls.set("wt:" + wakeTest.name, { ok: false, t: now() });
+  wakeTest = { ...wakeTest, step: 0, msg: "❌ " + why }; render();
+}
+function stepWakeTest(m) {
+  const t = wakeTest; if (!t || m.d !== t.name) return;
+  if (t.step === 1 && m.s === "sleep") {
+    clearTest(); t.step = 2; t.msg = "2/3 Asleep. Waiting 20 s before waking it…";
+    t.timers = [setTimeout(() => {
+      t.step = 3; t.sentAt = now(); t.msg = "3/3 Sending wake-up… (waiting up to 2 min)"; wake(t.name);
+      t.timers.push(setTimeout(() => wake(t.name), 15000));
+      t.timers.push(setTimeout(() => failTest("It didn't wake up. Press a key on it to wake it, then check the tips above."), 120000));
+      render();
+    }, 20000)];
+  } else if (t.step === 3 && m.s === "up" && (m.ts || 0) >= t.sentAt - 5) {
+    clearTest(); t.step = 0;
+    t.msg = m.ws === "network" ? `✅ It works! ${t.name} woke up from your wake-up signal.`
+                               : "✅ It woke up. (Windows didn't confirm it was the network. If nobody touched it, it works.)";
+    ls.set("wt:" + t.name, { ok: true, t: now() });
   }
 }
 
-$("refresh").onclick = () => send("status");
-function start(){ if (!cfg) return showSettings(true); send("status"); poll(); }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && cfg) send("status"); });
-start();
+// ============================================================== history
+function requestHistory(name, day, force) {
+  if (force || !histCache[name + "|" + day]) { histRid = "h" + Math.random().toString(36).slice(2); send("history", name, { day, rid: histRid }); }
+  if (force || !weekCache[name]) { weekRid = "w" + Math.random().toString(36).slice(2); send("history", name, { range: "week", rid: weekRid }); }
+}
+function bar(label, value, max, color) {
+  const w = max > 0 ? Math.max(2, Math.min(100, value / max * 100)) : 0;
+  return `<div class="bar"><span class="lbl">${esc(label)}</span><span class="track"><span class="fill" style="display:block;width:${w}%;background:${color}"></span></span><span class="val">${dur(value)}</span></div>`;
+}
+
+// ============================================================== rendering
+function render() {
+  const onSettings = !cfg || view.page === "settings";
+  if (onSettings && $("#s_topic")) return;          // don't wipe what you're typing
+  if (onSettings) return renderSettings();
+  if (view.page === "device") return renderDevice();
+  renderList();
+}
+
+function deviceCard(name, hb) {
+  const st = stateOf(hb), live = st === "on", sel = selected.has(name);
+  const activity = activityText(hb, live);
+  const meta = [];
+  if (has(hb, "bat")) meta.push(`🔋 ${hb.bat}%${hb.chg ? " ⚡" : ""}`);
+  if (live && hb.idle >= 60) meta.push(`💤 idle ${dur(hb.idle)}`);
+  meta.push("seen " + ago(now() - hb._t));
+  const w = wolOf(name), canWake = w && w.mac;
+  let buttons = "";
+  if (!selecting) {
+    buttons = live
+      ? `<div class="row r4"><button data-c="lock">🔒\nLock</button><button data-c="sleep">😴\nSleep</button><button data-c="restart">🔄\nRestart</button><button data-c="shutdown" class="danger">⏻\nOff</button></div>
+         <div class="row r3"><button data-c="msg">💬 Message</button><button data-c="ring">🔔 Ring</button><button data-c="cancel">✋ Cancel</button></div>`
+      : `<div class="row r1"><button data-c="wake" ${canWake ? "" : "style='opacity:.5'"}>⚡ Wake up</button></div>`;
+  }
+  return `<div class="card ${sel ? "selected" : ""}" data-d="${esc(name)}">
+    <div class="top" data-open="${esc(name)}">
+      ${selecting ? `<span class="check">${sel ? "✓" : ""}</span>` : ""}
+      <span class="icon">${esc(hb.e || "💻")}</span>
+      <div style="flex:1"><div class="name">${esc(name)}</div><div class="st ${st}">${stateLabel[st]}</div></div>
+      ${selecting ? "" : `<span class="sub" style="font-size:24px">›</span>`}
+    </div>
+    <div class="activity">${esc(activity)}</div>
+    ${live && statsLine(hb) ? `<div style="font-size:13px">${esc(statsLine(hb))}</div>` : ""}
+    <div class="meta">${esc(meta.join("   "))}</div>
+    ${todayLine(hb) ? `<div class="meta">${esc(todayLine(hb))}</div>` : ""}
+    ${wakeBadge(name) ? `<div class="meta">${esc(wakeBadge(name))}</div>` : ""}
+    ${buttons}</div>`;
+}
+
+function renderList() {
+  const names = Object.keys(devices).sort();
+  $("#app").innerHTML = `
+    <header><div class="grow"><h1>DeviceWatch</h1><div class="sub">${esc(statusText)}</div></div>
+      <button id="selBtn" style="height:46px">${selecting ? "Done" : "Select"}</button>
+      <button class="sq" id="refresh">↻</button><button class="sq" id="setBtn">⚙︎</button></header>
+    <main>${names.length ? names.map(n => deviceCard(n, devices[n])).join("")
+        : `<div class="empty">No devices yet.<br>Make sure the agents are running and use the same topic.</div>`}</main>
+    ${selecting ? `<div class="bulk"><div class="head"><span>${selected.size ? selected.size + " selected: " + esc([...selected].join(", ")) : "Tick the devices to control"}</span><button id="allBtn">All</button></div>
+      <div class="row r4"><button data-b="lock">🔒\nLock</button><button data-b="sleep">😴\nSleep</button><button data-b="restart">🔄\nRestart</button><button data-b="shutdown" class="danger">⏻\nOff</button></div>
+      <div class="row r4"><button data-b="msg">💬 Msg</button><button data-b="ring">🔔 Ring</button><button data-b="wake">⚡ Wake</button><button data-b="cancel">✋ Cancel</button></div></div>` : ""}`;
+  $("#selBtn").onclick = () => { selecting = !selecting; selected.clear(); render(); };
+  $("#refresh").onclick = () => send("status");
+  $("#setBtn").onclick = () => { view = { page: "settings" }; render(); };
+  const all = $("#allBtn"); if (all) all.onclick = () => { if (selected.size === names.length) selected.clear(); else names.forEach(n => selected.add(n)); render(); };
+  $("#app").onclick = e => {
+    const b = e.target.closest("button[data-b]");
+    if (b) { if (!selected.size) return toast("Tick at least one device first"); return run(b.dataset.b, [...selected]); }
+    const c = e.target.closest("button[data-c]");
+    if (c) return run(c.dataset.c, [c.closest("[data-d]").dataset.d]);
+    const card = e.target.closest("[data-d]");
+    if (!card || e.target.closest("button")) return;
+    const name = card.dataset.d;
+    if (selecting) { selected.has(name) ? selected.delete(name) : selected.add(name); render(); }
+    else openDevice(name);
+  };
+}
+
+function openDevice(name) {
+  view = { page: "device", name, day: ymd(new Date()) };
+  history.pushState({ d: name }, "", "#" + encodeURIComponent(name));
+  send("status", name); requestHistory(name, view.day, false);
+  render(); window.scrollTo(0, 0);
+}
+window.addEventListener("popstate", () => { clearTest(); wakeTest = null; view = { page: "list" }; render(); });
+
+function renderDevice() {
+  const name = view.name, hb = devices[name] || {}, st = stateOf(devices[name]), live = st === "on";
+  const kv = rows => `<div class="kv">${rows.filter(Boolean).map(([k, v]) => `<div>${esc(k)}</div><div>${v}</div>`).join("")}</div>`;
+  let nowHtml;
+  if (!live) nowHtml = `<div class="sub" style="font-size:15px">${st === "sleep" ? "😴 Sleeping. Wake it up from Control below." : "Not reachable right now."}</div>`;
+  else {
+    const noTemps = !has(hb, "ct") && !has(hb, "gt");
+    nowHtml = `<div style="font-size:17px;font-weight:650;margin-bottom:8px">${esc(activityText(hb, true))}</div>` + kv([
+      ["CPU", has(hb, "cpu") ? hb.cpu + "%" : "…"],
+      ["RAM", has(hb, "ram") ? hb.ram + "%" + (hb.ramgb ? ` of ${hb.ramgb} GB` : "") : "…"],
+      ["GPU", has(hb, "gpu") ? hb.gpu + "%" : "not available"],
+      noTemps ? ["Temperature", `<a href="#" id="tempInfo" style="color:var(--blue)">not available ⓘ</a>`] : null,
+      has(hb, "ct") ? ["CPU temp", hb.ct + " °C"] : null,
+      has(hb, "gt") ? ["GPU temp", hb.gt + " °C"] : null,
+      has(hb, "bat") ? ["Battery", hb.bat + "%" + (hb.chg ? " ⚡ charging" : "")] : null,
+      ["Turned on", dur(hb.up) + " ago"],
+      hb.idle >= 60 ? ["Idle", dur(hb.idle)] : null,
+      (hb.apps || []).length ? ["Open apps", esc(hb.apps.join(", "))] : null,
+    ]);
+  }
+  const control = live
+    ? `<div class="row r4" style="margin-top:0"><button data-c="lock">🔒\nLock</button><button data-c="sleep">😴\nSleep</button><button data-c="restart">🔄\nRestart</button><button data-c="shutdown" class="danger">⏻\nOff</button></div>
+       <div class="row r2"><button data-c="msg">💬 Message</button><button data-c="ring">🔔 Find (ring)</button></div>
+       <div class="row r2"><button data-c="cancel">✋ Cancel pending</button><button data-c="status">📊 Status</button></div>`
+    : `<div class="row r1" style="margin-top:0"><button data-c="wake">⚡ Wake up</button></div>
+       <div class="tip">From an iPhone, the wake-up signal is sent by your other laptops, so at least one must be on.</div>`;
+  const w = wolOf(name), tested = ls.get("wt:" + name);
+  const testing = wakeTest && wakeTest.name === name;
+  const wakeHtml = !w ? `<div class="sub">Waiting for the laptop to report (needs DeviceWatch 1.1 on it).</div>` :
+    kv([["From sleep", verdict(w.sleep)], ["From shutdown", verdict(w.off)],
+        ["Connection", { wifi: "Wi-Fi", ethernet: "Ethernet (cable)" }[w.conn] || esc(w.conn)],
+        w.adapter ? ["Adapter", esc(w.adapter)] : null,
+        tested ? ["Tested", (tested.ok ? "✅ Woke up" : "❌ Didn't wake up") + " · " + new Date(tested.t * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })] : null])
+    + (w.tips || []).map(t => `<div class="tip">• ${esc(t)}</div>`).join("")
+    + (testing && wakeTest.msg ? `<div style="margin-top:12px;font-weight:650">${esc(wakeTest.msg)}</div>` : "")
+    + `<div class="row r1"><button id="testWake" ${testing && wakeTest.step ? "disabled" : ""}>${testing && wakeTest.step ? "⏳ Testing…" : "🧪 Test wake-up"}</button></div>`;
+
+  const isToday = view.day === ymd(new Date());
+  const h = histCache[name + "|" + view.day];
+  let histHtml = `<div class="nav"><button class="sq" id="dPrev">‹</button><b>${isToday ? "Today" : new Date(view.day + "T12:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}</b><button class="sq" id="dNext" ${isToday ? "disabled" : ""}>›</button></div>`;
+  if (!h) histHtml += `<div class="sub" style="margin-top:12px">${live ? "Loading…" : `History is stored on the laptop. It appears when ${esc(name)} is online.`}</div>`;
+  else if (h.error) histHtml += `<div class="off" style="margin-top:12px">Couldn't read history: ${esc(h.error)}</div>`;
+  else {
+    histHtml += `<div style="font-weight:650;margin:12px 0 6px">On for ${dur(h.on)}</div>`;
+    const apps = Object.entries(h.apps || {}); const max = Math.max(1, ...apps.map(a => a[1]));
+    histHtml += apps.map(([a, s]) => bar(a, s, max, "var(--blue)")).join("");
+    const quiet = new Set(h.quiet || []);
+    const ev = (h.ev || []).filter(e => e[1] !== "rs").reverse();
+    histHtml += ev.length ? `<div class="sub" style="font-weight:700;margin-top:14px">Timeline</div>` +
+      ev.map(e => `<div class="ev ${["st", "cl"].includes(e[1]) && quiet.has(e[2]) ? "dim" : ""}"><span class="t">${clock(e[0])}</span><span>${esc(eventText(e))}</span></div>`).join("")
+      : `<div class="sub">Nothing happened this day.</div>`;
+    if (h.trunc) histHtml += `<div class="tip">(Some background-app events hidden to fit.)</div>`;
+  }
+  const wk = weekCache[name];
+  let weekHtml = `<div class="sub">${live ? "Loading…" : "Appears when the laptop is online."}</div>`;
+  if (wk && wk.week) {
+    const days = wk.week.slice().reverse(), max = Math.max(3600, ...days.map(d => d.on));
+    const totals = {}; days.forEach(d => Object.entries(d.apps || {}).forEach(([a, s]) => totals[a] = (totals[a] || 0) + s));
+    const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5), amax = top.length ? top[0][1] : 1;
+    weekHtml = days.map(d => bar(new Date(d.day + "T12:00").toLocaleDateString([], { weekday: "short", day: "numeric" }), d.on, max, "var(--green)")).join("")
+      + `<div style="font-weight:650;margin:10px 0 4px">Total on: ${dur(days.reduce((s, d) => s + d.on, 0))}</div>`
+      + top.map(([a, s]) => bar(a, s, amax, "var(--blue)")).join("");
+  }
+
+  $("#app").innerHTML = `
+    <header><button class="sq" id="back" style="font-size:22px">‹</button>
+      <div class="grow" style="padding-left:6px"><h2>${esc(hb.e || "💻")}  ${esc(name)}</h2>
+        <div class="st ${st}">${stateLabel[st]}${hb._t ? " · seen " + ago(now() - hb._t) : ""}</div></div>
+      <button class="sq" id="dRefresh">↻</button></header>
+    <div class="section">Right now</div><div class="card">${nowHtml}</div>
+    <div class="section">Control</div><div class="card" data-d="${esc(name)}">${control}</div>
+    <div class="section">Wake-up support</div><div class="card">${wakeHtml}</div>
+    <div class="section">History</div><div class="card">${histHtml}</div>
+    <div class="section">Last 7 days</div><div class="card">${weekHtml}</div>`;
+  $("#back").onclick = () => history.back();
+  $("#dRefresh").onclick = () => { send("status", name); requestHistory(name, view.day, true); };
+  $("#testWake").onclick = () => live ? startWakeTest(name) : toast(name + " must be online to start the test.");
+  $("#dPrev").onclick = () => { const d = new Date(view.day + "T12:00"); d.setDate(d.getDate() - 1); view.day = ymd(d); requestHistory(name, view.day, false); render(); };
+  $("#dNext").onclick = () => { const d = new Date(view.day + "T12:00"); d.setDate(d.getDate() + 1); if (ymd(d) <= ymd(new Date())) { view.day = ymd(d); requestHistory(name, view.day, false); render(); } };
+  const ti = $("#tempInfo"); if (ti) ti.onclick = e => { e.preventDefault(); ask("Temperatures", "Windows doesn't share CPU temperature with apps.<br><br>To see it: install the free <b>LibreHardwareMonitor</b> on the laptop, open <i>Options → Remote Web Server → Run</i> (port 8085), and tick <i>Run On Windows Startup</i>. DeviceWatch reads the temperatures automatically.<br><br>NVIDIA graphics card temperature works without it.", "OK", () => {}); };
+  $("#app").onclick = e => { const c = e.target.closest("button[data-c]"); if (c) run(c.dataset.c, [name]); };
+}
+
+function renderSettings() {
+  const c = cfg || { server: "https://ntfy.sh", topic: "", secret: "", token: "" };
+  $("#app").innerHTML = `
+    <header>${cfg ? `<button class="sq" id="back" style="font-size:22px">‹</button>` : ""}<div class="grow"><h1>Settings</h1>
+      <div class="sub">Use the same topic and secret as your laptops' config.json. Stored only on this device.</div></div></header>
+    <div class="card">
+      <label>ntfy server</label><input id="s_server" value="${esc(c.server)}" autocomplete="off" autocapitalize="off">
+      <label>Topic</label><input id="s_topic" value="${esc(c.topic)}" placeholder="dw-xxxxxxxxxxxxxxxx" autocomplete="off" autocapitalize="off">
+      <label>Secret</label><input id="s_secret" type="password" value="${esc(c.secret)}" autocomplete="off">
+      <label>Access token (only for a private ntfy server)</label><input id="s_token" type="password" value="${esc(c.token)}" autocomplete="off">
+      <div class="row r1" style="margin-top:16px"><button id="save" class="primary">Save</button></div>
+    </div>
+    <div class="section">Notifications on iPhone (+ Redmi Watch)</div>
+    <div class="card"><div class="sub">
+      1. Install <b>ntfy</b> from the App Store (free).<br>
+      2. Tap <b>+</b> and subscribe to your topic${c.topic ? `: <code>${esc(c.topic)}</code>` : ""}.<br>
+      3. In <b>Mi Fitness → Notifications</b>, enable ntfy so alerts reach your watch.</div></div>
+    <div class="section">Install this app</div>
+    <div class="card"><div class="sub">iPhone: open this page in <b>Safari</b> → Share <b>⎙</b> → <b>Add to Home Screen</b>.<br>
+      Android: ⋮ → <b>Add to Home screen</b> (or use the DeviceWatch APK).</div></div>`;
+  const back = $("#back"); if (back) back.onclick = () => { view = { page: "list" }; render(); };
+  $("#app").onclick = null;
+  $("#save").onclick = () => {
+    const n = { server: $("#s_server").value.trim().replace(/\/+$/, "") || "https://ntfy.sh", topic: $("#s_topic").value.trim(),
+                secret: $("#s_secret").value.trim(), token: $("#s_token").value.trim() };
+    if (!n.topic || !n.secret) return toast("Topic and secret are required");
+    const changed = !cfg || cfg.server !== n.server || cfg.topic !== n.topic;
+    cfg = n; ls.set("dw-cfg", n);
+    if (changed) { for (const k in devices) delete devices[k]; lastId = null; }
+    view = { page: "list" }; toast("Saved"); send("status"); poll();
+  };
+}
+
+// ============================================================== start
+document.addEventListener("visibilitychange", () => { if (!document.hidden && cfg) { send("status"); poll(); } });
+history.replaceState({}, "", location.pathname);
+render();
+if (cfg) { send("status"); poll(); }
 </script>
 </body>
 </html>

@@ -17,6 +17,10 @@ final class Prefs {
     String token()  { return sp.getString("token", ""); }
     boolean live()  { return sp.getBoolean("live", true); }
 
+    /** Small per-device cache (last wake-up report, wake-test result). */
+    String get(String key) { return sp.getString(key, null); }
+    void put(String key, String value) { sp.edit().putString(key, value).apply(); }
+
     boolean configured() { return !topic().isEmpty() && !secret().isEmpty(); }
 
     /** Changes whenever the connection settings change (used to reset cached state). */

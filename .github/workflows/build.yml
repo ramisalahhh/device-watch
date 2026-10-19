@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write   # to publish the APK as a GitHub Release
+  pages: write      # to publish the iPhone/web app on GitHub Pages
+  id-token: write
 
 jobs:
   test-agent:
@@ -70,3 +72,22 @@ jobs:
             --title "DeviceWatch build ${{ github.run_number }}" \
             --notes "Android app. Open this page on your phone and tap DeviceWatch.apk to install." \
             --latest
+
+  web:
+    # The iPhone / web app (phone-app/) -> https://<you>.github.io/device-watch/
+    # One-time setup: repo Settings -> Pages -> Source: "GitHub Actions".
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: phone-app
+      - id: deploy
+        uses: actions/deploy-pages@v4

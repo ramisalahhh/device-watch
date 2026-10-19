@@ -3,57 +3,47 @@ package com.rami.devicewatch;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import org.json.JSONObject;
 
-import java.text.DateFormat;
-import java.util.Date;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Set;
 
-/** Dashboard: one card per laptop with live status and power buttons. */
-public class MainActivity extends Activity {
-    /** A device with no heartbeat for this long is shown as offline (> 2x agent heartbeat). */
-    static final long STALE_SEC = 35 * 60;
-
-    private final Handler ui = new Handler(Looper.getMainLooper());
-    private final ExecutorService io = Executors.newSingleThreadExecutor();      // refreshes
-    private final ExecutorService cmdIo = Executors.newSingleThreadExecutor();   // commands never wait behind a refresh
-    private final Map<String, JSONObject> devices = new TreeMap<>();
-    private Prefs prefs;
-    private String lastId, signature;
-    private long fastUntil;
-    private boolean visible;
-    private LinearLayout list;
-    private TextView updated;
-
-    private final Runnable pollTask = this::poll;
+/** Dashboard: one card per laptop, plus "Select" mode to control several at once. */
+public class MainActivity extends Activity implements Hub.Listener {
+    private Hub hub;
+    private LinearLayout list, bulkBar;
+    private TextView updated, bulkLabel;
+    private Button selectBtn;
+    private boolean selecting;
+    private final Set<String> selected = new LinkedHashSet<>();
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        prefs = new Prefs(this);
+        hub = Hub.get(this);
 
         LinearLayout root = Ui.column(this);
         int pad = Ui.dp(this, 16);
-        root.setPadding(pad, pad, pad, pad);
+        root.setPadding(pad, pad, pad, 0);
 
-        // header
         LinearLayout header = Ui.row(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout titles = Ui.column(this);
@@ -61,16 +51,19 @@ public class MainActivity extends Activity {
         updated = Ui.text(this, "Connecting…", 13, Ui.DIM, false);
         titles.addView(updated);
         header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1f));
-        Button refresh = Ui.button(this, "↻", false);
-        refresh.setTextSize(18);
-        refresh.setOnClickListener(v -> sendCommand("status", "*"));
-        Button settings = Ui.button(this, "⚙", false);
-        settings.setTextSize(18);
-        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        selectBtn = Ui.button(this, "Select", false);
+        selectBtn.setOnClickListener(v -> setSelecting(!selecting));
+        header.addView(selectBtn, new LinearLayout.LayoutParams(-2, Ui.dp(this, 46)));
         int sq = Ui.dp(this, 46);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(sq, sq);
         lp.leftMargin = Ui.dp(this, 8);
+        Button refresh = Ui.button(this, "↻", false);
+        refresh.setTextSize(18);
+        refresh.setOnClickListener(v -> hub.refresh());
         header.addView(refresh, lp);
+        Button settings = Ui.button(this, "⚙", false);
+        settings.setTextSize(18);
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
         header.addView(settings, new LinearLayout.LayoutParams(lp));
         root.addView(header);
 
@@ -79,13 +72,17 @@ public class MainActivity extends Activity {
         list.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 24));
         scroll.addView(list);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        bulkBar = buildBulkBar();
+        bulkBar.setVisibility(View.GONE);
+        root.addView(bulkBar, Ui.fullWidth(this, 0));
         setContentView(root);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        visible = true;
+        Prefs prefs = hub.prefs();
         if (!prefs.configured()) {
             startActivity(new Intent(this, SettingsActivity.class));
             return;
@@ -96,115 +93,154 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
         WatchService.sync(this);
-        if (!prefs.signature().equals(signature)) {      // settings changed: start fresh
-            signature = prefs.signature();
-            devices.clear();
-            lastId = null;
-        }
-        sendCommand("status", "*");
-        poll();
+        hub.add(this);
+        hub.refresh();
+        render();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        visible = false;
-        ui.removeCallbacks(pollTask);
+        hub.remove(this);
     }
 
     @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        io.shutdownNow();
-        cmdIo.shutdownNow();
+    public void onBackPressed() {
+        if (selecting) setSelecting(false);
+        else super.onBackPressed();
     }
 
-    // ------------------------------------------------------------------ network
-    private void sendCommand(String cmd, String to) {
-        cmdIo.execute(() -> {
-            Exception last = null;
-            for (int attempt = 0; attempt < 3; attempt++) {           // retry brief network hiccups
-                try {
-                    Api.command(prefs, cmd, to, "app");
-                    last = null;
-                    break;
-                } catch (Exception e) {
-                    last = e;
-                    try { Thread.sleep(1200L * (attempt + 1)); } catch (InterruptedException ie) { return; }
-                }
-            }
-            final Exception err = last;
-            ui.post(() -> {
-                if (err != null) {
-                    String m = String.valueOf(err.getMessage());
-                    toast(m.contains("429") ? "Server busy (rate limit) - try again in a minute"
-                                            : "Couldn't send - check your internet");
-                    return;
-                }
-                if (!cmd.equals("status")) toast("Sent “" + cmd + "” to " + (to.equals("*") ? "all" : to) + "…");
-                fastUntil = System.currentTimeMillis() + 25000;
-                schedule(1200);
-            });
+    @Override
+    public void onUpdate() {
+        updated.setText(hub.status);
+        render();
+    }
+
+    // ------------------------------------------------------------------ select mode
+    private void setSelecting(boolean on) {
+        selecting = on;
+        selected.clear();
+        selectBtn.setText(on ? "Done" : "Select");
+        bulkBar.setVisibility(on ? View.VISIBLE : View.GONE);
+        updateBulkLabel();
+        render();
+    }
+
+    private void updateBulkLabel() {
+        if (bulkLabel != null)
+            bulkLabel.setText(selected.isEmpty() ? "Tick the devices to control"
+                    : selected.size() + " selected: " + String.join(", ", selected));
+    }
+
+    private LinearLayout buildBulkBar() {
+        LinearLayout bar = Ui.column(this);
+        int p = Ui.dp(this, 12);
+        bar.setPadding(p, p, p, p + Ui.dp(this, 8));
+        bar.setBackground(Ui.round(this, Ui.CARD, Ui.LINE, 18));
+
+        LinearLayout top = Ui.row(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        bulkLabel = Ui.text(this, "", 13, Ui.TEXT, false);
+        top.addView(bulkLabel, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button all = Ui.button(this, "All", false);
+        all.setOnClickListener(v -> {
+            if (selected.size() == hub.devices.size()) selected.clear();
+            else selected.addAll(hub.devices.keySet());
+            updateBulkLabel();
+            render();
         });
+        top.addView(all, new LinearLayout.LayoutParams(Ui.dp(this, 64), -2));
+        bar.addView(top);
+
+        LinearLayout r1 = Ui.row(this);
+        r1.setPadding(0, Ui.dp(this, 10), 0, 0);
+        r1.addView(bulk("🔒\nLock", "lock", false), Ui.weight(this, 3));
+        r1.addView(bulk("😴\nSleep", "sleep", false), Ui.weight(this, 3));
+        r1.addView(bulk("🔄\nRestart", "restart", false), Ui.weight(this, 3));
+        r1.addView(bulk("⏻\nOff", "shutdown", true), Ui.weight(this, 3));
+        bar.addView(r1);
+        LinearLayout r2 = Ui.row(this);
+        r2.setPadding(0, Ui.dp(this, 6), 0, 0);
+        r2.addView(bulk("💬 Message", "msg", false), Ui.weight(this, 3));
+        r2.addView(bulk("🔔 Ring", "ring", false), Ui.weight(this, 3));
+        r2.addView(bulk("⚡ Wake", "wake", false), Ui.weight(this, 3));
+        r2.addView(bulk("✋ Cancel", "cancel", false), Ui.weight(this, 3));
+        bar.addView(r2);
+        return bar;
     }
 
-    private void poll() {
-        ui.removeCallbacks(pollTask);
-        final String since = lastId != null ? lastId : (STALE_SEC * 2 / 60) + "m";
-        final String url = prefs.server() + "/" + prefs.topic() + "-hb/json?poll=1&since=" + since;
-        final String token = prefs.token();
-        io.execute(() -> {
-            String body = null;
-            try {
-                body = Api.get(url, token);
-            } catch (Exception ignored) {
+    private Button bulk(String label, String cmd, boolean danger) {
+        Button b = Ui.button(this, label, danger);
+        b.setOnClickListener(v -> {
+            if (selected.isEmpty()) {
+                hub.toast("Tick at least one device first");
+                return;
             }
-            final String result = body;
-            ui.post(() -> {
-                if (result == null) {
-                    updated.setText("Offline - retrying…");
-                } else {
-                    ingest(result);
-                    updated.setText("Updated " + DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date()));
-                }
-                render();
-                schedule(System.currentTimeMillis() < fastUntil ? 3000 : 30000);
-            });
+            final List<String> targets = new ArrayList<>(selected);
+            runCommand(this, hub, cmd, targets);
         });
+        return b;
     }
 
-    private void schedule(long ms) {
-        ui.removeCallbacks(pollTask);
-        if (visible) ui.postDelayed(pollTask, ms);
-    }
-
-    private void ingest(String ndjson) {
-        for (String line : ndjson.split("\n")) {
-            if (line.isEmpty()) continue;
-            try {
-                JSONObject ev = new JSONObject(line);
-                if (!"message".equals(ev.optString("event"))) continue;
-                lastId = ev.optString("id", lastId);
-                JSONObject hb = new JSONObject(ev.optString("message"));
-                String name = hb.optString("d");
-                String type = hb.optString("type");
-                if (name.isEmpty() || "dryrun".equals(type)) continue;
-                if ("ack".equals(type)) {                    // receipt: the laptop got the command
-                    long age = System.currentTimeMillis() / 1000 - ev.optLong("time");
-                    if (age < 60) toast("✓ " + name + " received “" + hb.optString("cmd") + "”");
-                    continue;
-                }
-                hb.put("_t", ev.optLong("time"));
-                devices.put(name, hb);
-            } catch (Exception ignored) {
+    /** Runs a command on one or several devices, with confirmation / message input. */
+    static void runCommand(Context c, Hub hub, String cmd, List<String> targets) {
+        String who = targets.size() == 1 ? targets.get(0) : targets.size() + " devices";
+        switch (cmd) {
+            case "sleep":
+            case "restart":
+            case "shutdown": {
+                String verb = cmd.equals("shutdown") ? "Shut down"
+                        : Character.toUpperCase(cmd.charAt(0)) + cmd.substring(1);
+                new AlertDialog.Builder(c, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle(verb + " " + who + "?")
+                        .setMessage("It happens after a short countdown. You can still cancel.")
+                        .setPositiveButton(verb, (d, w) -> {
+                            for (String t : targets) hub.send(cmd, t, null);
+                        })
+                        .setNegativeButton("No", null)
+                        .show();
+                break;
             }
+            case "msg": {
+                EditText input = new EditText(c);
+                input.setHint("e.g. Dinner is ready 🍽️");
+                input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                        | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+                input.setTextColor(Ui.TEXT);
+                input.setHintTextColor(Ui.DIM);
+                int p = Ui.dp(c, 20);
+                LinearLayout box = Ui.column(c);
+                box.setPadding(p, Ui.dp(c, 8), p, 0);
+                box.addView(input);
+                new AlertDialog.Builder(c, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle("Message on " + who + "'s screen")
+                        .setView(box)
+                        .setPositiveButton("Send", (d, w) -> {
+                            String text = input.getText().toString().trim();
+                            if (text.isEmpty()) return;
+                            JSONObject extra = new JSONObject();
+                            try {
+                                extra.put("text", text);
+                            } catch (Exception ignored) {
+                            }
+                            for (String t : targets) hub.send("msg", t, extra);
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
+                break;
+            }
+            case "wake":
+                for (String t : targets) hub.wake(t);
+                break;
+            default:
+                for (String t : targets) hub.send(cmd, t, null);
         }
     }
 
-    // ------------------------------------------------------------------ UI
+    // ------------------------------------------------------------------ cards
     private void render() {
         list.removeAllViews();
-        if (devices.isEmpty()) {
+        if (hub.devices.isEmpty()) {
             TextView empty = Ui.text(this, "No devices yet.\nMake sure the agents are running and use the same topic.",
                     15, Ui.DIM, false);
             empty.setGravity(Gravity.CENTER);
@@ -212,93 +248,110 @@ public class MainActivity extends Activity {
             list.addView(empty);
             return;
         }
-        long now = System.currentTimeMillis() / 1000;
-        for (Map.Entry<String, JSONObject> e : devices.entrySet()) {
-            list.addView(card(e.getKey(), e.getValue(), now), Ui.fullWidth(this, 0));
-            View gap = new View(this);
-            list.addView(gap, new LinearLayout.LayoutParams(1, Ui.dp(this, 14)));
+        for (Map.Entry<String, JSONObject> e : hub.devices.entrySet()) {
+            list.addView(card(e.getKey(), e.getValue()), Ui.fullWidth(this, 0));
+            list.addView(new View(this), new LinearLayout.LayoutParams(1, Ui.dp(this, 14)));
         }
     }
 
-    private View card(String name, JSONObject hb, long now) {
-        long age = now - hb.optLong("_t");
-        String s = hb.optString("s", "up");
-        int color;
-        String label;
-        if ("sleep".equals(s)) { color = Ui.AMBER; label = "● Sleeping"; }
-        else if ("off".equals(s)) { color = Ui.RED; label = "● Turned off"; }
-        else if (age > STALE_SEC) { color = Ui.RED; label = "● Offline"; }
-        else { color = Ui.GREEN; label = "● Online"; }
-        boolean live = color == Ui.GREEN;
+    static int stateColor(String st) {
+        switch (st) {
+            case "up": return Ui.GREEN;
+            case "sleep": return Ui.AMBER;
+            default: return Ui.RED;
+        }
+    }
 
-        LinearLayout card = Ui.column(this);
-        int p = Ui.dp(this, 16);
-        card.setPadding(p, p, p, p);
-        card.setBackground(Ui.round(this, Ui.CARD, Ui.LINE, 18));
+    static String stateLabel(String st) {
+        switch (st) {
+            case "up": return "● Online";
+            case "sleep": return "● Sleeping";
+            case "off": return "● Turned off";
+            default: return "● Offline";
+        }
+    }
+
+    private View card(String name, JSONObject hb) {
+        String st = Hub.state(hb);
+        boolean live = st.equals("up");
+        LinearLayout card = Ui.card(this);
+        if (selected.contains(name)) card.setBackground(Ui.round(this, 0xFF15233D, Ui.BLUE, 18));
 
         LinearLayout top = Ui.row(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
+        if (selecting) {
+            CheckBox cb = new CheckBox(this);
+            cb.setChecked(selected.contains(name));
+            cb.setClickable(false);
+            top.addView(cb);
+        }
         TextView icon = Ui.text(this, hb.optString("e", "💻"), 30, Ui.TEXT, false);
         icon.setPadding(0, 0, Ui.dp(this, 12), 0);
         top.addView(icon);
         LinearLayout names = Ui.column(this);
         names.addView(Ui.text(this, name, 17, Ui.TEXT, true));
-        names.addView(Ui.text(this, label, 13, color, false));
-        top.addView(names);
+        names.addView(Ui.text(this, stateLabel(st), 13, stateColor(st), false));
+        top.addView(names, new LinearLayout.LayoutParams(0, -2, 1f));
+        if (!selecting) top.addView(Ui.text(this, "›", 26, Ui.DIM, false));
         card.addView(top);
 
-        String activity;
-        if (!live) activity = "—";
-        else if (!hb.optString("app").isEmpty()) activity = "🎮 " + hb.optString("app");
-        else if (!hb.optString("fg").isEmpty()) activity = "In front: " + hb.optString("fg");
-        else activity = "No tracked app open";
-        TextView act = Ui.text(this, activity, 16, Ui.TEXT, false);
-        act.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4));
+        TextView act = Ui.text(this, Ui.activity(hb, live), 16, Ui.TEXT, false);
+        act.setPadding(0, Ui.dp(this, 12), 0, Ui.dp(this, 2));
         card.addView(act);
 
+        if (live && !Ui.stats(hb).isEmpty()) card.addView(Ui.text(this, Ui.stats(hb), 13, Ui.TEXT, false));
         StringBuilder meta = new StringBuilder();
         if (!hb.isNull("bat") && hb.has("bat"))
             meta.append("🔋 ").append(hb.optInt("bat")).append('%').append(hb.optBoolean("chg") ? " ⚡" : "").append("   ");
         if (live && hb.optLong("idle") >= 60) meta.append("💤 idle ").append(Ui.duration(hb.optLong("idle"))).append("   ");
-        if (live && hb.optLong("up") > 0) meta.append("⏱ up ").append(Ui.duration(hb.optLong("up"))).append("   ");
-        meta.append("seen ").append(Ui.ago(age));
+        meta.append("seen ").append(Ui.ago(Hub.now() - hb.optLong("_t")));
         card.addView(Ui.text(this, meta.toString(), 13, Ui.DIM, false));
+        String today = Ui.today(hb);
+        if (!today.isEmpty()) card.addView(Ui.text(this, today, 13, Ui.DIM, false));
+        String badge = Ui.wakeBadge(hub.wol(name), hub.prefs().get("wt:" + name));
+        if (!badge.isEmpty()) card.addView(Ui.text(this, badge, 13, Ui.DIM, false));
+
+        if (selecting) {
+            card.setOnClickListener(v -> {
+                if (!selected.remove(name)) selected.add(name);
+                updateBulkLabel();
+                render();
+            });
+            return card;
+        }
+        card.setOnClickListener(v -> startActivity(new Intent(this, DeviceActivity.class).putExtra("d", name)));
+        List<String> me = new ArrayList<>();
+        me.add(name);
 
         LinearLayout row1 = Ui.row(this);
         row1.setPadding(0, Ui.dp(this, 14), 0, 0);
-        row1.addView(action(name, "lock", "🔒\nLock", false), Ui.weight(this, 4));
-        row1.addView(action(name, "sleep", "😴\nSleep", false), Ui.weight(this, 4));
-        row1.addView(action(name, "restart", "🔄\nRestart", false), Ui.weight(this, 4));
-        row1.addView(action(name, "shutdown", "⏻\nOff", true), Ui.weight(this, 4));
+        if (live) {
+            row1.addView(action("🔒\nLock", "lock", me, false), Ui.weight(this, 4));
+            row1.addView(action("😴\nSleep", "sleep", me, false), Ui.weight(this, 4));
+            row1.addView(action("🔄\nRestart", "restart", me, false), Ui.weight(this, 4));
+            row1.addView(action("⏻\nOff", "shutdown", me, true), Ui.weight(this, 4));
+        } else {
+            JSONObject w = hub.wol(name);
+            Button wake = action("⚡ Wake up", "wake", me, false);
+            if (w == null || w.optString("mac").isEmpty()) wake.setAlpha(0.5f);
+            row1.addView(wake, Ui.weight(this, 4));
+        }
         card.addView(row1);
 
-        LinearLayout row2 = Ui.row(this);
-        row2.setPadding(0, Ui.dp(this, 8), 0, 0);
-        row2.addView(action(name, "status", "📊 Status", false), Ui.weight(this, 4));
-        row2.addView(action(name, "cancel", "✋ Cancel pending", false), Ui.weight(this, 4));
-        card.addView(row2);
+        if (live) {
+            LinearLayout row2 = Ui.row(this);
+            row2.setPadding(0, Ui.dp(this, 8), 0, 0);
+            row2.addView(action("💬 Message", "msg", me, false), Ui.weight(this, 4));
+            row2.addView(action("🔔 Ring", "ring", me, false), Ui.weight(this, 4));
+            row2.addView(action("✋ Cancel", "cancel", me, false), Ui.weight(this, 4));
+            card.addView(row2);
+        }
         return card;
     }
 
-    private Button action(String device, String cmd, String label, boolean danger) {
+    private Button action(String label, String cmd, List<String> targets, boolean danger) {
         Button b = Ui.button(this, label, danger);
-        b.setOnClickListener(v -> {
-            if (cmd.equals("sleep") || cmd.equals("restart") || cmd.equals("shutdown")) {
-                String verb = cmd.equals("shutdown") ? "Shut down" : cmd.substring(0, 1).toUpperCase() + cmd.substring(1);
-                new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                        .setTitle(verb + " " + device + "?")
-                        .setMessage("It happens after a short countdown. You can still cancel.")
-                        .setPositiveButton(verb, (d, w) -> sendCommand(cmd, device))
-                        .setNegativeButton("No", null)
-                        .show();
-            } else {
-                sendCommand(cmd, device);
-            }
-        });
+        b.setOnClickListener(v -> runCommand(this, hub, cmd, targets));
         return b;
-    }
-
-    private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
     }
 }

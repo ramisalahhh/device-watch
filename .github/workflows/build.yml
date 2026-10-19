@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: History unit tests
+        run: TZ=Africa/Cairo python tests/test_history.py
       - name: End-to-end test (agent + monitor against a mock ntfy)
         run: python tests/test_e2e.py
 

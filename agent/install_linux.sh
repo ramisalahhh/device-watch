@@ -5,7 +5,7 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 TARGET="$HOME/.local/share/devicewatch"
 mkdir -p "$TARGET" "$HOME/.config/systemd/user"
-cp "$HERE/device_agent.py" "$HERE/config.example.json" "$TARGET/"
+cp "$HERE"/*.py "$HERE/config.example.json" "$TARGET/"
 [ -f "$TARGET/config.json" ] || (cd "$TARGET" && python3 device_agent.py --setup)
 
 cat > "$HOME/.config/systemd/user/devicewatch.service" <<EOF

@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
 DeviceWatch agent - tells your phone (and watch) what this computer is doing,
-and lets you lock / sleep / restart / shut it down from your phone.
+and lets you control it from your phone: lock / sleep / restart / shut down,
+show a message on screen, ring it to find it, and wake other laptops.
 
 Design goals: tiny footprint.
   * Python standard library only (no pip install). Windows APIs via ctypes.
   * Polls cheaply every few seconds; one idle HTTP connection for commands.
-  * Writes nothing to disk unless you pass --log.
+  * Disk: only a small history file (a few KB per day, kept 60 days).
   * Runs at below-normal priority so it never competes with games.
 
 Usage:
-  python device_agent.py --setup      first-time config wizard
-  python device_agent.py --discover   show the .exe name of the app in front (to add rules)
-  python device_agent.py --test       send a test notification
-  python device_agent.py              run (installer starts it with pythonw at logon)
+  python device_agent.py --setup        first-time config wizard
+  python device_agent.py --discover     show the .exe name of the app in front (to add rules)
+  python device_agent.py --test         send a test notification
+  python device_agent.py --wake-check   can this laptop be woken remotely? (and how to fix it)
+  python device_agent.py --enable-wake  allow the network adapter to wake the PC (run as admin)
+  python device_agent.py                run (installer starts it with pythonw at logon)
 """
 import json
 import logging
@@ -28,10 +31,11 @@ from collections import deque
 from urllib.parse import urlsplit
 from _operator import _compare_digest as compare_digest  # = hmac.compare_digest, without hashlib
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 IS_WIN = sys.platform == "win32"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.environ.get("DW_CONFIG", os.path.join(BASE_DIR, "config.json"))
+DATA_DIR = os.environ.get("DW_DATA", BASE_DIR)          # history file lives here
 
 
 def run(args, **kw):
@@ -43,6 +47,7 @@ def run(args, **kw):
 DRY_RUN = os.environ.get("DW_DRY_RUN") == "1"   # log power actions instead of running them
 
 log = logging.getLogger("devicewatch")
+ALWAYS_ALLOWED = {"status", "history", "cancel", "wake"}   # harmless, can't be disabled
 
 DEFAULTS = {
     "device_name": socket.gethostname(),
@@ -54,7 +59,8 @@ DEFAULTS = {
     "check_seconds": 5,
     "heartbeat_minutes": 15,
     "action_delay_seconds": 30,
-    "allowed_commands": ["status", "lock", "sleep", "restart", "shutdown", "cancel"],
+    "allowed_commands": ["status", "lock", "sleep", "restart", "shutdown", "cancel",
+                         "msg", "ring", "wake", "history"],
     "buttons_in_notifications": True,
     "show_window_titles": False,
     "notify": {
@@ -426,6 +432,16 @@ class Agent:
         self.fg = ("", "")
         self.down_at = 0
         self.resume_lock = threading.Lock()
+        self.rules = {r["label"]: r for r in cfg["apps"]}
+        import dw_stats
+        from dw_history import History
+        self.stats = dw_stats.Stats()
+        self.stats_lock = threading.Lock()
+        self.hist = History(DATA_DIR)
+        self.game = {}                # loud app label -> running stats while it's open
+        self.wol = None               # wake-up capability report (filled in the background)
+        self.wake_by = None           # what woke us last ("network" / "other")
+        self.ringing = False
 
     def _boot_id(self):
         return int((time.time() - uptime_seconds()) // 120)
@@ -441,20 +457,40 @@ class Agent:
         loud = {r["label"] for r in self.cfg["apps"] if r.get("notify", True)}
         return max(self.sessions, key=lambda l: (l in loud, self.sessions[l]))
 
-    def snapshot(self, kind="hb"):
+    def is_loud(self, label):
+        return self.rules.get(label, {}).get("notify", True)
+
+    def snapshot(self, kind="hb", level="none"):
+        """level: 'none' (instant, used right before sleep), 'quick' (+CPU/RAM/today),
+        'full' (+GPU, temperatures, wake-up report)."""
         pct, charging = battery()
         exe, title = self.fg
-        data = {"v": 1, "type": kind, "d": self.name, "e": self.emoji, "s": self.state,
+        data = {"v": 2, "type": kind, "d": self.name, "e": self.emoji, "s": self.state,
                 "b": self.boot_id, "app": self.activity(), "apps": sorted(self.sessions),
+                "na": sorted(l for l in self.sessions if self.is_loud(l)),
                 "fg": exe, "bat": pct, "chg": charging, "idle": idle_seconds(),
                 "up": uptime_seconds(), "ts": int(time.time())}
         if self.cfg["show_window_titles"]:
             data["title"] = title[:80]
+        if self.wake_by:
+            data["ws"] = self.wake_by
+        if level != "none":
+            try:
+                with self.stats_lock:
+                    data.update(self.stats.full() if level == "full" else self.stats.quick())
+            except Exception:
+                log.exception("stats")
+            try:
+                data["td"] = self.hist.today_brief()
+            except Exception:
+                log.exception("today")
+        if level == "full" and self.wol:
+            data["wol"] = self.wol
         return data
 
     def heartbeat(self, kind="hb"):
         self.last_hb = time.time()
-        self.net.publish_hb(self.snapshot(kind))
+        self.net.publish_hb(self.snapshot(kind, "quick" if kind == "change" else "full"))
 
     def power_buttons(self):
         return [self.net.action("🔒 Lock", "lock"), self.net.action("😴 Sleep", "sleep"),
@@ -478,6 +514,7 @@ class Agent:
             return
         self.state = state
         self.down_at = time.time()
+        self.hist.add("sl" if state == "sleep" else "off")
         self.end_all_sessions(silent=True)
         self.net.publish_hb(self.snapshot(), timeout=3)   # tells monitor: expected, don't alarm
         if self.cfg["notify"]["sleep_and_shutdown"]:
@@ -491,8 +528,15 @@ class Agent:
             self.state = "resuming"
         log.info("resumed")
         self.boot_id = self._boot_id()
+        self.wake_by = None
+        try:
+            import dw_wake
+            self.wake_by = dw_wake.last_wake_source((self.wol or {}).get("adapter"))
+        except Exception:
+            log.exception("wake source")
+        self.hist.add("wk", None, {"by": self.wake_by})
         self.state = "up"
-        self.announce_online("woke up")
+        self.announce_online("woke up" + (" (from your phone 📱)" if self.wake_by == "network" else ""))
         self.heartbeat()
 
     # ---- apps ------------------------------------------------------------
@@ -500,12 +544,51 @@ class Agent:
         for label in list(self.sessions):
             self._stop_app(label, silent)
 
-    def _stop_app(self, label, silent=False):
+    def _stop_app(self, label, silent=False, record=False):
         started = self.sessions.pop(label, None)
-        if started and not silent and self.cfg["notify"]["apps"]:
+        g = self.game.pop(label, None)
+        if not started:
+            return
+        dur = int(time.time() - started)
+        extra, text = {"dur": dur}, ""
+        if not self.is_loud(label):
+            extra["q"] = 1
+        if g:
+            if g["n"]:
+                extra["cpu"] = round(g["cpu"] / g["n"])
+                text += f" · CPU avg {extra['cpu']}%"
+            if g["gn"]:
+                extra["gpu"] = round(g["gpu"] / g["gn"])
+                text += f" · GPU avg {extra['gpu']}%"
+            temps = [f"{k} {g[v]}°C" for k, v in (("CPU", "ct"), ("GPU", "gt")) if g[v] is not None]
+            if temps:
+                extra.update({k: g[k] for k in ("ct", "gt") if g[k] is not None})
+                text += " · 🌡 max " + " / ".join(temps)
+        if record:
+            self.hist.add("cl", label, extra)
+        if not silent and self.cfg["notify"]["apps"]:
             self.net.notify(self.t(f"closed {label}"),
-                            f"Closed {label} after {fmt_duration(time.time() - started)}",
+                            f"Closed {label} after {fmt_duration(dur)}{text}",
                             tags=["white_check_mark"], priority=2)
+
+    def sample_game_stats(self):
+        """Once a minute while a game/loud app is open: remember averages and peak temps."""
+        loud = [l for l in self.sessions if self.is_loud(l)]
+        if not loud:
+            return
+        with self.stats_lock:
+            s = self.stats.full()
+        for label in loud:
+            g = self.game.setdefault(label, {"n": 0, "cpu": 0, "gn": 0, "gpu": 0, "ct": None, "gt": None})
+            if s.get("cpu") is not None:
+                g["n"] += 1
+                g["cpu"] += s["cpu"]
+            if s.get("gpu") is not None:
+                g["gn"] += 1
+                g["gpu"] += s["gpu"]
+            for k in ("ct", "gt"):
+                if s.get(k) is not None:
+                    g[k] = max(g[k] or 0, s[k])
 
     def check_apps(self, running):
         for rule in self.cfg["apps"]:
@@ -513,6 +596,7 @@ class Agent:
             active = bool(rule["_procs"] & running)
             if active and label not in self.sessions:
                 self.sessions[label] = time.time()
+                self.hist.add("st", label, None if rule.get("notify", True) else {"q": 1})
                 if self.cfg["notify"]["apps"] and rule.get("notify", True):
                     verb = rule.get("verb", "using")
                     icon = rule.get("emoji", "🟦")
@@ -522,7 +606,7 @@ class Agent:
                                     actions=self.power_buttons())
                 self.heartbeat("change")
             elif not active and label in self.sessions:
-                self._stop_app(label, silent=not rule.get("notify", True))
+                self._stop_app(label, silent=not rule.get("notify", True), record=True)
                 self.heartbeat("change")
 
     def check_idle(self):
@@ -608,11 +692,11 @@ class Agent:
             return
         cmd = msg.get("cmd")
         reply = msg.get("reply", "notify")
-        if cmd not in self.cfg["allowed_commands"]:
+        if cmd not in self.cfg["allowed_commands"] and cmd not in ALWAYS_ALLOWED:
             self.net.notify(self.t("⛔ refused"), f"'{cmd}' is not allowed on this device", priority=2)
             return
         log.info("command: %s", cmd)
-        if cmd != "status":   # status replies with fresh data, which is its own receipt
+        if cmd not in ("status", "history", "wake"):   # those reply with data = their own receipt
             self.net.publish_hb({"v": 1, "type": "ack", "d": self.name, "cmd": cmd,
                                  "ts": int(time.time())}, timeout=5)
         if cmd == "status":
@@ -624,13 +708,91 @@ class Agent:
             self.cancel_pending()
         elif cmd in ("sleep", "restart", "shutdown"):
             self.schedule(cmd)
+        elif cmd == "msg":
+            text = str(msg.get("text", "")).strip()[:500]
+            if text:
+                threading.Thread(target=self.show_message, args=(text,), daemon=True).start()
+        elif cmd == "ring":
+            if not self.ringing:
+                self.ringing = True
+                threading.Thread(target=self.ring, daemon=True).start()
+        elif cmd == "wake":
+            self.relay_wake(msg)
+        elif cmd == "history":
+            self.send_history(msg)
+
+    # ---- message / ring / wake / history ---------------------------------
+    def show_message(self, text):
+        if DRY_RUN:
+            self.net.publish_hb({"v": 2, "type": "dryrun", "d": self.name, "cmd": "msg", "text": text})
+        else:
+            from dw_popup import show_box
+            show_box(text, "DeviceWatch - message from your phone")
+        self.net.notify(self.t("👀 read your message"), f"“{text[:120]}”", tags=["eyes"], priority=2)
+
+    def ring(self):
+        try:
+            if DRY_RUN:
+                self.net.publish_hb({"v": 2, "type": "dryrun", "d": self.name, "cmd": "ring"})
+                result = "found"
+            else:
+                from dw_popup import ring
+                result = ring(60)
+            if result == "found":
+                self.net.notify(self.t("✅ found!"), f"Someone clicked OK on {self.name}", priority=3)
+            else:
+                self.net.notify(self.t("🔔 stopped ringing"), "Rang for 60 s - nobody clicked OK",
+                                priority=2)
+        finally:
+            self.ringing = False
+
+    def relay_wake(self, msg):
+        """Another laptop asked to be woken: we're on the same home network, so we
+        send the magic packet for it (works even when the phone is away from home)."""
+        target, mac = msg.get("target"), msg.get("mac")
+        if not mac or target == self.name or self.state != "up":
+            return
+        try:
+            import dw_wake
+            n = dw_wake.send_magic(mac, msg.get("bcast"))
+        except (ValueError, OSError) as e:
+            log.warning("wake relay failed: %s", e)
+            return
+        log.info("sent wake-up for %s (%d packets)", target, n)
+        self.net.publish_hb({"v": 2, "type": "relay", "d": self.name, "target": target, "n": n,
+                             "ts": int(time.time())}, timeout=5)
+
+    def send_history(self, msg):
+        try:
+            if msg.get("range") == "week":
+                data = {"v": 2, "type": "histw", "d": self.name, "week": self.hist.week(7)}
+            else:
+                data = {"v": 2, "type": "hist", "d": self.name}
+                data.update(self.hist.day(msg.get("day")))
+        except Exception as e:
+            log.exception("history")
+            data = {"v": 2, "type": "hist", "d": self.name, "error": str(e)[:200]}
+        data["rid"] = msg.get("rid")
+        self.net.publish_hb(data)
+
+    def refresh_wol(self):
+        try:
+            import dw_wake
+            self.wol = dw_wake.capability()
+        except Exception:
+            log.exception("wake check")
 
     def send_status(self, reply):
         if reply == "app":
             self.heartbeat("status")
             return
-        s = self.snapshot()
+        s = self.snapshot("status", "full")
         parts = [f"🎮 {s['app']}" if s["app"] else "No tracked app open"]
+        load = [f"{k} {s[v]}%" for k, v in (("CPU", "cpu"), ("RAM", "ram"), ("GPU", "gpu"))
+                if s.get(v) is not None]
+        temps = [f"{k} {s[v]}°C" for k, v in (("CPU", "ct"), ("GPU", "gt")) if s.get(v) is not None]
+        if load:
+            parts.append(" · ".join(load) + (" · 🌡 " + " / ".join(temps) if temps else ""))
         if s["fg"]:
             parts.append(f"In front: {s['fg']}")
         if s["bat"] is not None:
@@ -707,6 +869,11 @@ class Agent:
     def run(self):
         lower_priority()
         log.info("DeviceWatch %s starting as '%s'", VERSION, self.name)
+        try:
+            self.hist.startup(self.boot_id, fresh_boot=uptime_seconds() < 600)
+        except Exception:
+            log.exception("history startup")
+        self.refresh_wol()                              # ~0.2 s, needed for the first heartbeat
         self.announce_online()
         self.heartbeat()
         threading.Thread(target=self.command_listener, daemon=True, name="commands").start()
@@ -735,8 +902,14 @@ class Agent:
                 if tick % 6 == 0:                              # these change slowly
                     self.check_idle()
                     self.check_battery()
+                if tick % max(1, 60 // interval) == 0:         # once a minute
+                    self.sample_game_stats()
+                if tick % max(1, 21600 // interval) == 0:      # every 6 h
+                    threading.Thread(target=self.refresh_wol, daemon=True).start()
+                    self.hist.prune()
                 if now - self.last_hb >= hb_every:
                     self.heartbeat()
+                    self.hist.alive()
                 del table
             except Exception:
                 # never die: log it (crash.log) and keep watching on the next tick
@@ -892,6 +1065,21 @@ def main():
         except KeyboardInterrupt:
             return
     cfg = load_config()
+    if flag("--wake-check", "--enable-wake"):
+        import dw_wake
+        cap = dw_wake.capability()
+        if flag("--enable-wake"):
+            if not cap.get("adapter"):
+                return print("No active network adapter found.")
+            print(dw_wake.enable_wake(cap["adapter"]) or "Done (if you saw no error).")
+            cap = dw_wake.capability()
+        icons = {"yes": "✅ yes", "maybe": "⚠️  maybe (test it)", "no": "❌ no", "?": "? unknown"}
+        print(f"Network: {cap.get('conn')}  adapter: {cap.get('adapter')}  MAC: {cap.get('mac')}")
+        print(f"Wake from SLEEP:    {icons.get(cap.get('sleep'), '?')}")
+        print(f"Wake from SHUTDOWN: {icons.get(cap.get('off'), '?')}")
+        for tip in cap.get("tips", []):
+            print(" -", tip)
+        return
     if flag("--test"):
         net = Ntfy(cfg)
         net.notify(f"{cfg['emoji']} {cfg['device_name']}: test ✅",

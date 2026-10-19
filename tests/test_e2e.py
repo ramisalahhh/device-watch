@@ -40,15 +40,15 @@ def wait_for(topic, pred, timeout=15):
     return None
 
 
-def check(name, ok):
+def check(name, ok, detail=None):
     results.append((name, bool(ok)))
-    print(("PASS " if ok else "FAIL ") + name)
+    print(("PASS " if ok else "FAIL ") + name + ("" if ok or detail is None else f"   -> {str(detail)[:300]}"))
     if not ok and os.environ.get("GITHUB_ACTIONS"):
         print(f"::error title=Test failed::{name}")   # shows up as an annotation on the run
 
 
-def cmd(c, to="Test-PC", key=SECRET, reply="notify"):
-    body = json.dumps({"cmd": c, "to": to, "key": key, "reply": reply}).encode()
+def cmd(c, to="Test-PC", key=SECRET, reply="notify", **extra):
+    body = json.dumps({"cmd": c, "to": to, "key": key, "reply": reply, **extra}).encode()
     urllib.request.urlopen(urllib.request.Request(f"{SERVER}/{TOPIC}-cmd", data=body,
                                                   method="POST")).read()
 
@@ -69,7 +69,8 @@ def main():
            "apps": [{"label": "Fake Game", "emoji": "⚽", "verb": "playing",
                      "process": ["dw_fake_game"]}]}
     (tmp / "config.json").write_text(json.dumps(cfg))
-    env = {"DW_CONFIG": str(tmp / "config.json"), "DW_DRY_RUN": "1"}
+    env = {"DW_CONFIG": str(tmp / "config.json"), "DW_DRY_RUN": "1", "DW_DATA": str(tmp),
+           "DW_WOL_PORTS": "40009"}
 
     agent = spawn([sys.executable, str(ROOT / "agent/device_agent.py")], env)
     check("online notification", wait_for(TOPIC, lambda m: "🟢" in m.get("title", "")
@@ -121,6 +122,57 @@ def main():
     time.sleep(2)
     check("command for other device ignored",
           not any('"cmd":"lock"' in m["message"] for m in msgs(TOPIC + "-hb")))
+
+    # ---- v1.1 features ----------------------------------------------------
+    hb = lambda pred, timeout=15: wait_for(TOPIC + "-hb", lambda m: pred(json.loads(m["message"])), timeout)
+    cmd("status", reply="app")
+    st = hb(lambda d: d.get("type") == "status" and "cpu" in d)
+    st = json.loads(st["message"]) if st else {}
+    check("status has CPU/RAM stats", isinstance(st.get("cpu"), int) and isinstance(st.get("ram"), int), st)
+    check("status has today's summary", "on" in st.get("td", {}), st.get("td"))
+    check("status has wake-up report", st.get("wol", {}).get("sleep") in ("yes", "maybe", "no", "?"),
+          st.get("wol"))
+
+    cmd("history", reply="app", rid="r1")
+    h = hb(lambda d: d.get("type") == "hist" and d.get("rid") == "r1")
+    h = json.loads(h["message"]) if h else {}
+    codes = [e[1] for e in h.get("ev", [])]
+    check("history: day timeline", "on" in codes and "st" in codes and "cl" in codes, codes)
+    check("history: game time counted", "Fake Game" in h.get("apps", {}), h.get("apps"))
+    cmd("history", reply="app", range="week", rid="r2")
+    w = hb(lambda d: d.get("type") == "histw" and d.get("rid") == "r2")
+    w = json.loads(w["message"]) if w else {}
+    check("history: 7-day totals", len(w.get("week", [])) == 7, w)
+
+    cmd("msg", text="Dinner is ready 🍽️")
+    check("message shown on screen", hb(lambda d: d.get("type") == "dryrun" and d.get("cmd") == "msg"
+                                         and "Dinner" in d.get("text", "")))
+    check("message read receipt", wait_for(TOPIC, lambda m: "read your message" in m.get("title", "")))
+
+    cmd("ring")
+    check("ring started", hb(lambda d: d.get("type") == "dryrun" and d.get("cmd") == "ring"))
+    check("ring -> found notification", wait_for(TOPIC, lambda m: "found!" in m.get("title", "")))
+
+    import socket as _s
+    udp = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 40009))
+    udp.settimeout(10)
+    cmd("wake", to="*", target="Other-PC", mac="AA:BB:CC:DD:EE:FF", bcast="127.0.0.1")
+    try:
+        pkt = udp.recv(200)
+    except OSError:
+        pkt = b""
+    check("wake relay sends magic packet", pkt == b"\xff" * 6 + bytes.fromhex("AABBCCDDEEFF") * 16, pkt[:12])
+    check("wake relay reported", hb(lambda d: d.get("type") == "relay" and d.get("target") == "Other-PC"))
+    cmd("wake", to="*", target="Test-PC", mac="AA:BB:CC:DD:EE:FF", bcast="127.0.0.1")
+    udp.settimeout(3)
+    try:
+        udp.recv(200)
+        own = True
+    except OSError:
+        own = False
+    check("laptop doesn't 'wake' itself", not own)
+    udp.close()
 
     kb = rss_kb(agent.pid)
     cpu = sum(int(x) for x in Path(f"/proc/{agent.pid}/stat").read_text().split()[13:15]) / os.sysconf("SC_CLK_TCK")

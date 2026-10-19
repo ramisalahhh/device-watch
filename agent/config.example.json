@@ -9,7 +9,8 @@
   "check_seconds": 5,
   "heartbeat_minutes": 15,
   "action_delay_seconds": 30,
-  "allowed_commands": ["status", "lock", "sleep", "restart", "shutdown", "cancel"],
+  "allowed_commands": ["status", "lock", "sleep", "restart", "shutdown", "cancel",
+                       "msg", "ring", "wake", "history"],
   "buttons_in_notifications": true,
   "show_window_titles": false,
 

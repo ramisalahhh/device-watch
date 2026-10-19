@@ -31,7 +31,7 @@ Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
 
 # 3. Copy files (keeps an existing config.json)
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
-Copy-Item (Join-Path $Here "device_agent.py") $Target -Force
+Copy-Item (Join-Path $Here "*.py") $Target -Force
 Copy-Item (Join-Path $Here "config.example.json") $Target -Force
 $cfg = Join-Path $Target "config.json"
 if (-not (Test-Path $cfg)) {
@@ -61,4 +61,5 @@ Pop-Location
 Write-Host "`nInstalled to $Target and started." -ForegroundColor Green
 Write-Host "Edit apps/settings:  notepad `"$cfg`"   (then re-run this installer to restart)"
 Write-Host "Find a game's process name:  cd `"$Target`"; py device_agent.py --discover"
+Write-Host "Can it be woken remotely?    cd `"$Target`"; py device_agent.py --wake-check"
 Read-Host "`nPress Enter to close"
